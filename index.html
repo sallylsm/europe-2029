@@ -129,7 +129,13 @@ h3 { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: v
 .map-grid { display: grid; grid-template-columns: minmax(0, 1.75fr) minmax(300px, 1fr); gap: 18px; align-items: start; }
 .map-card { padding: 0; overflow: hidden; position: relative; }
 .map-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; padding: 16px 18px 0; flex-wrap: wrap; }
-svg.map { display: block; width: 100%; height: auto; background: var(--sea); }
+svg.map { display: block; width: 100%; height: auto; background: var(--sea); touch-action: pan-y; user-select: none; -webkit-user-select: none; }
+svg.map.grab { cursor: grab; } svg.map.grabbing { cursor: grabbing; }
+svg.map .c, svg.map .grat, svg.map .route { vector-effect: non-scaling-stroke; }
+.map-ctl { position: absolute; top: 10px; right: 10px; display: grid; gap: 4px; z-index: 2; }
+.map-ctl button { width: 34px; height: 34px; border-radius: 9px; border: 1px solid var(--line); background: var(--surface); color: var(--ink); font-size: 17px; font-weight: 700; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.12); display: grid; place-items: center; }
+.map-ctl button:hover { border-color: var(--ink); }
+.map-ctl button:disabled { opacity: .4; cursor: default; }
 svg.map .c { fill: var(--land); stroke: var(--land-line); stroke-width: .7; }
 svg.map .c.on { fill: var(--accent-soft); }
 svg.map .grat { fill: none; stroke: var(--land-line); stroke-opacity: .35; stroke-width: .6; }
@@ -209,6 +215,20 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--leaf); c
 .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .row.between { justify-content: space-between; }
 .total { font: 650 20px var(--f-display); }
+.stops { display: grid; gap: 4px; min-width: 230px; }
+#v-costs .two { grid-template-columns: minmax(0, 1fr); }
+#v-costs .two > * { min-width: 0; }
+#v-costs .two > .side { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); align-items: start; }
+#expTbl select[data-f="cat"] { min-width: 150px; }
+#expTbl input[data-f="date"] { min-width: 140px; }
+.stop { display: grid; grid-template-columns: 1fr 80px auto; gap: 4px; align-items: center; }
+.stop .cell { border-color: var(--line); padding: 5px 7px; font-size: 13px; }
+.stop-foot { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.addstop { border: 1px dashed var(--line); background: transparent; border-radius: 7px; padding: 4px 9px; font-size: 12.5px; font-weight: 600; color: var(--muted); cursor: pointer; }
+.addstop:hover { border-color: var(--accent); color: var(--accent); }
+.onday { display: grid; gap: 4px; }
+.onday div { font-size: 12.5px; padding: 6px 8px; border-radius: 8px; background: var(--paper); line-height: 1.35; }
+.onday b { color: var(--accent); font-weight: 700; margin-right: 4px; }
 .cat-bars { display: grid; gap: 8px; }
 .cat-bar { display: grid; grid-template-columns: 130px 1fr 90px; gap: 10px; align-items: center; font-size: 13px; }
 .cat-bar .track { height: 10px; background: var(--paper); border-radius: 99px; overflow: hidden; display: flex; }
@@ -345,7 +365,7 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--leaf); c
   <section class="view" id="v-map">
     <div class="map-grid">
       <div class="card map-card">
-        <div class="map-head"><div><h2>Where do we want to go?</h2><p class="hint">Tap a pin to add it. The dashed line follows your route order.</p></div></div>
+        <div class="map-head"><div><h2>Where do we want to go?</h2><p class="hint">Tap a pin to add it. Drag, scroll or pinch to move around. The dashed line follows your route order.</p></div></div>
         <div id="mapBox" style="position:relative"></div>
         <div class="legend"><span>Not yet</span><span class="on">On the list</span><span class="line">Route</span></div>
       </div>
@@ -376,9 +396,9 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--leaf); c
   <section class="view" id="v-costs">
     <div class="two">
       <div class="card">
-        <div class="row between"><div><h2>Costs</h2><p class="hint">Flights, trains, stays and the rest. Total = per person × people.</p></div><button class="btn" id="addExp" type="button">Add a cost</button></div>
+        <div class="row between"><div><h2>Costs</h2><p class="hint">Flights, trains, stays and the rest. Total = per person × people. Give a flight or train a date and it shows up on that day, layovers included.</p></div><button class="btn" id="addExp" type="button">Add a cost</button></div>
         <div class="tbl-wrap" style="margin-top:12px">
-          <table id="expTbl"><thead><tr><th>Booked</th><th>Category</th><th>What</th><th>City</th><th>Date</th><th class="num">Per person</th><th class="num">People</th><th class="num">Total</th><th class="num">Paid</th><th>Notes</th><th></th></tr></thead><tbody></tbody></table>
+          <table id="expTbl"><thead><tr><th>Booked</th><th>Category</th><th>What</th><th>City</th><th>Date</th><th>Layovers</th><th class="num">Per person</th><th class="num">People</th><th class="num">Total</th><th class="num">Paid</th><th>Notes</th><th></th></tr></thead><tbody></tbody></table>
         </div>
       </div>
       <div class="side">
@@ -564,7 +584,9 @@ const COUNTRY = { England: "United Kingdom", Scotland: "United Kingdom" };
 function buildMap() {
   const base = MAP.countries.map(c => `<path class="c" data-n="${esc(c.n)}" d="${c.d}"/>`).join("");
   const grat = MAP.grat.map(d => `<path class="grat" d="${d}"/>`).join("");
-  $("#mapBox").innerHTML = `<svg class="map" viewBox="0 0 ${MAP.W} ${MAP.H}" role="img" aria-label="Map of Europe with city pins"><g>${grat}${base}</g><g id="routeLayer"></g><g id="pinLayer"></g></svg><div class="tip" id="tip"></div>`;
+  $("#mapBox").innerHTML = `<svg class="map" viewBox="0 0 ${MAP.W} ${MAP.H}" role="img" aria-label="Map of Europe with city pins"><g>${grat}${base}</g><g id="routeLayer"></g><g id="pinLayer"></g></svg><div class="tip" id="tip"></div>
+    <div class="map-ctl"><button type="button" data-z="in" aria-label="Zoom in">+</button><button type="button" data-z="out" aria-label="Zoom out">−</button><button type="button" data-z="fit" aria-label="Zoom to our route" title="Zoom to our route">◎</button><button type="button" data-z="reset" aria-label="Show all of Europe" title="Show all of Europe">⤢</button></div>`;
+  setupPanZoom();
   const tip = $("#tip"), box = $("#mapBox");
   $("#pinLayer").addEventListener("click", e => { const g = e.target.closest(".pin"); if (g) toggleCity(g.dataset.id); });
   $("#pinLayer").addEventListener("keydown", e => { const g = e.target.closest(".pin"); if (g && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); toggleCity(g.dataset.id); } });
@@ -576,12 +598,107 @@ function buildMap() {
   });
   $("#pinLayer").addEventListener("pointerout", e => { if (!e.relatedTarget || !e.relatedTarget.closest?.(".pin")) tip.style.opacity = 0; });
 }
+// ---- pan & zoom ----
+let vb = { x: 0, y: 0, w: MAP.W, h: MAP.H };
+const zoom = () => MAP.W / vb.w;
+function clampVB() {
+  vb.w = Math.min(MAP.W, Math.max(MAP.W / 8, vb.w)); vb.h = vb.w * MAP.H / MAP.W;
+  vb.x = Math.min(MAP.W - vb.w, Math.max(0, vb.x)); vb.y = Math.min(MAP.H - vb.h, Math.max(0, vb.y));
+}
+function applyZoom() {
+  const svg = document.querySelector("svg.map"); if (!svg) return;
+  clampVB();
+  svg.setAttribute("viewBox", `${vb.x.toFixed(2)} ${vb.y.toFixed(2)} ${vb.w.toFixed(2)} ${vb.h.toFixed(2)}`);
+  const k = 1 / zoom();
+  svg.querySelectorAll("[data-x]").forEach(g => g.setAttribute("transform", `translate(${g.dataset.x},${g.dataset.y}) scale(${k})`));
+  const t = document.getElementById("tempPin"); if (t) t.setAttribute("r", 9 * k);
+  svg.style.touchAction = zoom() > 1.01 ? "none" : "pan-y";
+  svg.classList.toggle("grab", zoom() > 1.01);
+  const ctl = $("#mapBox .map-ctl");
+  if (ctl) { ctl.querySelector('[data-z="in"]').disabled = zoom() >= 7.99; ctl.querySelector('[data-z="out"]').disabled = zoom() <= 1.01; ctl.querySelector('[data-z="reset"]').disabled = zoom() <= 1.01; }
+}
+function zoomAt(newW, px, py) {
+  const r = Math.min(MAP.W, Math.max(MAP.W / 8, newW)) / vb.w;
+  vb.x = px - (px - vb.x) * r; vb.y = py - (py - vb.y) * r; vb.w *= r; applyZoom();
+}
+let animId = 0;
+function animateTo(target) {
+  const from = { ...vb }, t0 = performance.now(), id = ++animId;
+  const reduce = matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const step = now => {
+    if (id !== animId) return;
+    const t = reduce ? 1 : Math.min(1, (now - t0) / 320), e = 1 - Math.pow(1 - t, 3);
+    vb = { x: from.x + (target.x - from.x) * e, y: from.y + (target.y - from.y) * e, w: from.w + (target.w - from.w) * e, h: 0 };
+    applyZoom(); if (t < 1) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+function fitRoute() {
+  const pts = routeCities().filter(c => !c.off); if (!pts.length) return;
+  const xs = pts.map(c => c.x), ys = pts.map(c => c.y), pad = 90;
+  let x0 = Math.min(...xs) - pad, x1 = Math.max(...xs) + pad, y0 = Math.min(...ys) - pad, y1 = Math.max(...ys) + pad;
+  let w = Math.max(x1 - x0, (y1 - y0) * MAP.W / MAP.H, MAP.W / 5);
+  const cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, h = w * MAP.H / MAP.W;
+  animateTo({ x: cx - w / 2, y: cy - h / 2, w });
+}
+function setupPanZoom() {
+  const svg = document.querySelector("svg.map");
+  const toSvg = (cx, cy) => { const pt = svg.createSVGPoint(); pt.x = cx; pt.y = cy; return pt.matrixTransform(svg.getScreenCTM().inverse()); };
+  svg.addEventListener("wheel", e => {
+    e.preventDefault(); animId++;
+    const q = toSvg(e.clientX, e.clientY), f = Math.exp(Math.max(-60, Math.min(60, e.deltaY)) * 0.004);
+    zoomAt(vb.w * f, q.x, q.y);
+  }, { passive: false });
+  const pts = new Map(); let start = null, pinch = null, moved = false, swallow = false;
+  svg.addEventListener("pointerdown", e => {
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY }); animId++;
+    if (pts.size === 1) { start = { x: e.clientX, y: e.clientY, vb: { ...vb } }; moved = false; }
+    if (pts.size === 2) {
+      const [a, b] = [...pts.values()];
+      pinch = { d: Math.hypot(a.x - b.x, a.y - b.y) || 1, w: vb.w }; moved = true;
+    }
+  });
+  svg.addEventListener("pointermove", e => {
+    if (!pts.has(e.pointerId)) return;
+    pts.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pts.size >= 2 && pinch) {
+      const [a, b] = [...pts.values()], d = Math.hypot(a.x - b.x, a.y - b.y) || 1, q = toSvg((a.x + b.x) / 2, (a.y + b.y) / 2);
+      zoomAt(pinch.w * pinch.d / d, q.x, q.y); pinch = { d, w: vb.w };
+      return;
+    }
+    if (!start) return;
+    const dx = e.clientX - start.x, dy = e.clientY - start.y;
+    if (!moved && Math.hypot(dx, dy) > 6 && zoom() > 1.01) { moved = true; try { svg.setPointerCapture(e.pointerId); } catch {} svg.classList.add("grabbing"); }
+    if (moved) {
+      const scale = start.vb.w / svg.getBoundingClientRect().width;
+      vb.x = start.vb.x - dx * scale; vb.y = start.vb.y - dy * scale; applyZoom();
+    }
+  });
+  const end = e => {
+    pts.delete(e.pointerId); svg.classList.remove("grabbing");
+    if (pts.size < 2) pinch = null;
+    if (pts.size === 1) { const [a] = [...pts.values()]; start = { x: a.x, y: a.y, vb: { ...vb } }; }
+    if (!pts.size) { if (moved) swallow = true; start = null; setTimeout(() => { swallow = false; }, 0); }
+  };
+  svg.addEventListener("pointerup", end); svg.addEventListener("pointercancel", end);
+  svg.addEventListener("click", e => { if (swallow) { e.stopPropagation(); e.preventDefault(); swallow = false; } }, true);
+  $("#mapBox .map-ctl").addEventListener("click", e => {
+    e.stopPropagation();
+    const b = e.target.closest("button[data-z]"); if (!b) return;
+    const cx = vb.x + vb.w / 2, cy = vb.y + vb.h / 2;
+    if (b.dataset.z === "in") { const w = Math.max(MAP.W / 8, vb.w / 1.6); animateTo({ x: cx - w / 2, y: cy - w * MAP.H / MAP.W / 2, w }); }
+    if (b.dataset.z === "out") { const w = Math.min(MAP.W, vb.w * 1.6); animateTo({ x: cx - w / 2, y: cy - w * MAP.H / MAP.W / 2, w }); }
+    if (b.dataset.z === "reset") animateTo({ x: 0, y: 0, w: MAP.W });
+    if (b.dataset.z === "fit") fitRoute();
+  });
+}
 let pinKey = "";
 function renderPins() {
   $("#pinLayer").innerHTML = CITIES.filter(c => !c.off).map(c => {
     const left = c.side === "l";
-    return `<g class="pin" data-id="${esc(c.id)}" tabindex="0" role="button" aria-label="${esc(c.name)}" transform="translate(${c.x},${c.y})"><circle class="hit" r="16"/><circle class="dot" r="6"/><text x="${left ? -11 : 11}" y="${4.5 + (c.dy || 0)}" text-anchor="${left ? "end" : "start"}">${esc(c.name)}</text></g>`;
+    return `<g class="pin" data-id="${esc(c.id)}" tabindex="0" role="button" aria-label="${esc(c.name)}" data-x="${c.x}" data-y="${c.y}" transform="translate(${c.x},${c.y}) scale(${1 / zoom()})"><circle class="hit" r="16"/><circle class="dot" r="6"/><text x="${left ? -11 : 11}" y="${4.5 + (c.dy || 0)}" text-anchor="${left ? "end" : "start"}">${esc(c.name)}</text></g>`;
   }).join("");
+  applyZoom();
 }
 function renderMap() {
   rebuildCities();
@@ -602,9 +719,10 @@ function renderMap() {
       const a = route[i - 1], b = route[i], mx = (a.x + b.x) / 2, my = (a.y + b.y) / 2, dx = b.x - a.x, dy = b.y - a.y;
       d += ` M ${a.x} ${a.y} Q ${mx - dy * 0.18} ${my + dx * 0.18} ${b.x} ${b.y}`;
     }
-    route.forEach(c => { const i = all.indexOf(c); nums += `<circle cx="${c.x}" cy="${c.y - 16}" r="8" fill="var(--ink)"/><text class="num" x="${c.x}" y="${c.y - 12.5}" text-anchor="middle">${i + 1}</text>`; });
+    route.forEach(c => { const i = all.indexOf(c); nums += `<g data-x="${c.x}" data-y="${c.y}" transform="translate(${c.x},${c.y})" style="pointer-events:none"><circle cy="-16" r="8" fill="var(--ink)"/><text class="num" y="-12.5" text-anchor="middle">${i + 1}</text></g>`; });
   }
-  $("#routeLayer").innerHTML = `<path class="route" d="${d}"/>${nums}${route.length ? `<g class="inbound"><text x="14" y="${Math.max(48, route[0].y - 150)}">from ITO · Hilo ✈</text></g>` : ""}`;
+  $("#routeLayer").innerHTML = `<path class="route" d="${d}"/>${nums}${route.length ? `<g class="inbound" data-x="14" data-y="${Math.max(48, route[0].y - 150)}" transform="translate(14,${Math.max(48, route[0].y - 150)})"><text>from ITO · Hilo ✈</text></g>` : ""}`;
+  applyZoom();
   // route list
   const st = set();
   $("#routeList").innerHTML = all.length ? all.map((c, i) => {
@@ -642,6 +760,29 @@ $("#routeList").addEventListener("click", e => { const b = e.target.closest("but
 $("#chips").addEventListener("click", e => { const b = e.target.closest(".chip"); if (b) toggleCity(b.dataset.id); });
 
 // ---------- COSTS ----------
+const TRANSPORT = ["Flights", "Trains", "Local transport"];
+function parseDur(t) {
+  t = String(t || "").trim().toLowerCase(); if (!t) return 0;
+  let m = t.match(/^(\d+):(\d{1,2})$/); if (m) return +m[1] * 60 + +m[2];
+  let mins = 0, hit = false;
+  const h = t.match(/(\d+(?:\.\d+)?)\s*h/); if (h) { mins += parseFloat(h[1]) * 60; hit = true; }
+  const mm = t.match(/(\d+)\s*m/); if (mm) { mins += +mm[1]; hit = true; }
+  if (!hit && /^\d+(\.\d+)?$/.test(t)) mins = parseFloat(t) * 60;
+  return Math.round(mins);
+}
+const fmtDur = m => m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? " " + (m % 60) + "m" : ""}` : `${m}m`;
+function stopSummary(st) {
+  const n = st.filter(x => (x.at || "").trim()).length, tot = st.reduce((a, x) => a + parseDur(x.dur), 0);
+  if (!n) return "";
+  return `${n} stop${n > 1 ? "s" : ""}${tot ? " · " + fmtDur(tot) + " waiting" : ""}`;
+}
+function stopsHtml(id, e) {
+  if (!TRANSPORT.includes(e.cat)) return `<span class="hint">—</span>`;
+  const st = Array.isArray(e.stops) ? e.stops : [];
+  const ph = e.cat === "Trains" ? "Station" : e.cat === "Flights" ? "Airport (e.g. SEA)" : "Where";
+  return `<div class="stops">${st.map((x, i) => `<div class="stop"><input class="cell" id="sa-${id}-${i}" data-si="${i}" data-sf="at" value="${esc(x.at)}" placeholder="${ph}" aria-label="Layover place"><input class="cell dur" id="sd-${id}-${i}" data-si="${i}" data-sf="dur" value="${esc(x.dur)}" placeholder="2h 30m" aria-label="Layover length"><button class="del" type="button" data-rmstop="${i}" aria-label="Remove this layover">×</button></div>`).join("")}
+    <div class="stop-foot"><button class="addstop" type="button" data-addstop>+ ${st.length ? "Another stop" : "Add a layover"}</button><span class="hint" data-sum>${esc(stopSummary(st))}</span></div></div>`;
+}
 const rowTotal = e => num(e.est) * (e.people === "" || e.people == null ? travelers() : num(e.people));
 function totals() {
   let est = 0, paid = 0; const cat = {};
@@ -661,13 +802,14 @@ function renderCosts() {
     <td><input class="cell" id="ew-${id}" data-f="what" value="${esc(e.what)}" placeholder="e.g. Eurostar London → Paris" style="min-width:200px" aria-label="What"></td>
     <td><select class="cell" id="ey-${id}" data-f="city" aria-label="City" style="min-width:120px">${cityOptions(e.city)}</select></td>
     <td><input class="cell" id="ed-${id}" type="date" data-f="date" value="${esc(e.date)}" aria-label="Date"></td>
+    <td class="stops-cell">${stopsHtml(id, e)}</td>
     <td class="num"><input class="cell" id="ee-${id}" type="number" min="0" step="1" data-f="est" value="${e.est ?? ""}" style="width:90px" aria-label="Estimated per person"></td>
     <td class="num"><input class="cell" id="ep-${id}" type="number" min="0" step="1" data-f="people" value="${e.people ?? ""}" placeholder="${travelers()}" style="width:60px" aria-label="People"></td>
     <td class="num"><b data-total>${money(rowTotal(e))}</b></td>
     <td class="num"><input class="cell" id="ea-${id}" type="number" min="0" step="1" data-f="paid" value="${e.paid ?? ""}" style="width:90px" aria-label="Paid so far"></td>
     <td><input class="cell" id="en-${id}" data-f="notes" value="${esc(e.notes)}" style="min-width:180px" aria-label="Notes"></td>
     <td><button class="del" type="button" data-del aria-label="Delete row">×</button></td></tr>`).join("")
-    : `<tr><td colspan="11"><div class="empty">No costs yet. Add the flight out of Hilo to get started.</div></td></tr>`;
+    : `<tr><td colspan="12"><div class="empty">No costs yet. Add the flight out of Hilo to get started.</div></td></tr>`;
   renderCostSummary();
 }
 function renderCostSummary() {
@@ -678,17 +820,36 @@ function renderCostSummary() {
   const left = budget - t.est; $("#tLeft").textContent = money(left); $("#tLeft").style.color = left < 0 ? "var(--accent)" : "var(--leaf)";
 }
 function expChange(e) {
-  const tr = e.target.closest("tr[data-id]"); if (!tr || !e.target.dataset.f) return;
+  const tr0 = e.target.closest("tr[data-id]");
+  if (tr0 && e.target.dataset.sf) {
+    const id = tr0.dataset.id, i = +e.target.dataset.si, st = (S.expenses[id].stops || []).map(x => ({ ...x }));
+    st[i] = { ...st[i], [e.target.dataset.sf]: e.target.value.slice(0, 60) };
+    S.expenses[id] = { ...S.expenses[id], stops: st }; save("expenses/" + id, S.expenses[id], 600);
+    const sum = tr0.querySelector("[data-sum]"); if (sum) sum.textContent = stopSummary(st);
+    return;
+  }
+  const tr = tr0; if (!tr || !e.target.dataset.f) return;
   const id = tr.dataset.id, f = e.target.dataset.f, el = e.target;
   const v = el.type === "checkbox" ? el.checked : (el.type === "number" ? (el.value === "" ? "" : num(el.value)) : el.value);
   S.expenses[id] = { ...S.expenses[id], [f]: v };
   save("expenses/" + id, S.expenses[id], el.type === "checkbox" || el.tagName === "SELECT" ? 0 : 500);
   tr.querySelector("[data-total]").textContent = money(rowTotal(S.expenses[id]));
   if (f === "booked") tr.classList.toggle("done", v);
+  if (f === "cat") tr.querySelector(".stops-cell").innerHTML = stopsHtml(id, S.expenses[id]);
   renderCostSummary(); renderStats();
 }
 $("#expTbl").addEventListener("input", expChange);
-$("#expTbl").addEventListener("click", e => { if (e.target.closest("[data-del]")) { const id = e.target.closest("tr").dataset.id; delete S.expenses[id]; remove("expenses/" + id); renderAll(); } });
+$("#expTbl").addEventListener("click", e => {
+  const add = e.target.closest("[data-addstop]"), rm = e.target.closest("[data-rmstop]");
+  if (add || rm) {
+    const id = e.target.closest("tr").dataset.id, st = (S.expenses[id].stops || []).map(x => ({ ...x }));
+    if (add) st.push({ at: "", dur: "" }); else st.splice(+rm.dataset.rmstop, 1);
+    S.expenses[id] = { ...S.expenses[id], stops: st }; save("expenses/" + id, S.expenses[id], 0);
+    const tr = e.target.closest("tr"); tr.querySelector(".stops-cell").innerHTML = stopsHtml(id, S.expenses[id]);
+    if (add) document.getElementById(`sa-${id}-${st.length - 1}`)?.focus();
+    return;
+  }
+  if (e.target.closest("[data-del]")) { const id = e.target.closest("tr").dataset.id; delete S.expenses[id]; remove("expenses/" + id); renderAll(); } });
 $("#addExp").addEventListener("click", () => {
   const id = live ? doc(collection(fs, "expenses")).id : "x" + Date.now();
   S.expenses[id] = { cat: "Flights", what: "", city: "", est: "", people: "", paid: "", notes: "", booked: false, created: Date.now() };
@@ -701,8 +862,12 @@ function renderDays() {
   for (let i = 0; i < st.len; i++) {
     const k = "d" + String(i + 1).padStart(2, "0"), d = S.days[k] || {}, dt = dayDate(i);
     const travel = i === 0 || i === st.len - 1;
+    const iso = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
+    const moves = Object.values(S.expenses).filter(x => x.date === iso && TRANSPORT.includes(x.cat)).sort((a, b) => (a.created || 0) - (b.created || 0));
+    const movesHtml = moves.length ? `<div class="onday">${moves.map(x => { const via = (x.stops || []).filter(y => (y.at || "").trim()); return `<div><b>${x.cat === "Flights" ? "Flight" : x.cat === "Trains" ? "Train" : "Transfer"}</b>${esc(x.what || "Untitled")}${via.length ? ` · via ${via.map(y => esc(y.at) + (parseDur(y.dur) ? " (" + fmtDur(parseDur(y.dur)) + ")" : "")).join(", ")}` : ""}</div>`; }).join("")}</div>` : "";
     h += `<div class="day ${travel ? "travel" : ""}" data-k="${k}">
       <div class="day-top"><span class="dn">Day ${i + 1}</span><span class="dt">${fmtD(dt, { weekday: "short", month: "short", day: "numeric" }).toUpperCase()}</span></div>
+      ${movesHtml}
       <label for="dc-${k}">City</label><select class="cell" id="dc-${k}" data-f="city">${cityOptions(d.city)}</select>
       <label for="ds-${k}">Sleeping at</label><input class="cell" id="ds-${k}" data-f="stay" value="${esc(d.stay)}" placeholder="${i === 0 ? "On the plane" : "Hotel / apartment"}">
       <label for="dp-${k}">Plan</label><textarea class="cell" id="dp-${k}" data-f="plan" placeholder="${i === 0 ? "ITO → HNL → Europe" : i === st.len - 1 ? "Fly home. Arrive Hilo the same day thanks to the time difference" : "Morning, afternoon, evening…"}">${esc(d.plan)}</textarea>
@@ -972,7 +1137,7 @@ $("#mapBox").addEventListener("click", e => {
   dropAt = unproject(q.x, q.y);
   let t = document.getElementById("tempPin");
   if (!t) { t = document.createElementNS("http://www.w3.org/2000/svg", "circle"); t.id = "tempPin"; t.setAttribute("class", "temp"); t.setAttribute("r", "9"); svg.appendChild(t); }
-  t.setAttribute("cx", q.x); t.setAttribute("cy", q.y);
+  t.setAttribute("cx", q.x); t.setAttribute("cy", q.y); t.setAttribute("r", 9 / zoom());
   $("#pinForm").hidden = false; $("#pinName").focus();
 });
 $("#pinForm").addEventListener("submit", e => {
