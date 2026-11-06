@@ -4,6 +4,12 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Europe 2029</title>
+<script>
+try { const t = JSON.parse(localStorage.getItem("e29-theme") || "{}"); const m = t.mode || "auto";
+  document.documentElement.dataset.accent = t.accent || "lehua";
+  document.documentElement.dataset.theme = m === "auto" ? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : m;
+} catch (e) { document.documentElement.dataset.accent = "lehua"; }
+</script>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="icon-192.png">
@@ -47,6 +53,23 @@
   --sea: #16303B; --land: #22303A; --land-line: #3A4B57; --accent: #F06A5B; --accent-soft: #4A2724;
   --leaf: #5CC2A3; --leaf-soft: #1D3A33; --warn: #E2A84B; color-scheme: dark;
 }
+/* accent themes: each has a light and a dark version */
+:root[data-accent="lehua"] { --accent: #D9483B; --accent-soft: #F8DCD6; }
+:root[data-theme="dark"][data-accent="lehua"] { --accent: #F06A5B; --accent-soft: #4A2724; }
+:root[data-accent="sunset"] { --accent: #C2610F; --accent-soft: #FAE3CD; }
+:root[data-theme="dark"][data-accent="sunset"] { --accent: #F5A04E; --accent-soft: #45301C; }
+:root[data-accent="fern"] { --accent: #3B7A39; --accent-soft: #DCEBD7; }
+:root[data-theme="dark"][data-accent="fern"] { --accent: #7CC77A; --accent-soft: #21371F; }
+:root[data-accent="ocean"] { --accent: #2461B5; --accent-soft: #DBE6F6; }
+:root[data-theme="dark"][data-accent="ocean"] { --accent: #6FA6F2; --accent-soft: #1C2C47; }
+:root[data-accent="lagoon"] { --accent: #107A74; --accent-soft: #D2EEEA; }
+:root[data-theme="dark"][data-accent="lagoon"] { --accent: #4FD1C5; --accent-soft: #153A38; }
+:root[data-accent="plumeria"] { --accent: #7646B3; --accent-soft: #E9DFF6; }
+:root[data-theme="dark"][data-accent="plumeria"] { --accent: #B593F0; --accent-soft: #322548; }
+:root[data-accent="hibiscus"] { --accent: #BE3674; --accent-soft: #F7DBE8; }
+:root[data-theme="dark"][data-accent="hibiscus"] { --accent: #F07AB0; --accent-soft: #482236; }
+:root { --warn-soft: #F7E7C8; --on-accent: #FFFFFF; --p1: #2461B5; --p2: #BE3674; --p3: #3B7A39; --p4: #B7791F; --p5: #7646B3; --p6: #107A74; }
+:root[data-theme="dark"] { --warn-soft: #3D3020; --on-accent: #10171D; --p1: #6FA6F2; --p2: #F07AB0; --p3: #7CC77A; --p4: #E2A84B; --p5: #B593F0; --p6: #4FD1C5; }
 * { box-sizing: border-box; }
 html, body { margin: 0; }
 body { background: var(--paper); color: var(--ink); font: 14px/1.5 var(--f-body); }
@@ -77,6 +100,21 @@ nav.tabs { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid va
 nav.tabs a { padding: 10px 14px; text-decoration: none; color: var(--muted); font-weight: 600; border-bottom: 2px solid transparent; margin-bottom: -1px; }
 nav.tabs a[aria-current="page"] { color: var(--ink); border-color: var(--accent); }
 nav.tabs a:hover { color: var(--ink); }
+.theme-wrap { margin-left: auto; position: relative; align-self: center; }
+.theme-btn { display: inline-flex; align-items: center; gap: 8px; border: 1px solid var(--line); background: var(--surface); border-radius: 99px; padding: 6px 12px; font-weight: 600; cursor: pointer; }
+.theme-btn:hover { border-color: var(--ink); }
+.sw-dot { width: 14px; height: 14px; border-radius: 50%; background: var(--accent); box-shadow: inset 0 0 0 2px var(--accent-soft); }
+.theme-panel { position: absolute; right: 0; top: calc(100% + 8px); z-index: 5; width: 290px; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 16px; box-shadow: 0 12px 32px rgba(0,0,0,.18); }
+.theme-panel[hidden] { display: none; }
+.swatches { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.swatches button { border: 0; background: transparent; display: grid; justify-items: center; gap: 4px; font-size: 11.5px; color: var(--muted); cursor: pointer; padding: 4px 0; border-radius: 8px; }
+.swatches i { width: 30px; height: 30px; border-radius: 50%; display: block; border: 2px solid var(--surface); box-shadow: 0 0 0 1px var(--line); }
+.swatches button[aria-pressed="true"] i { box-shadow: 0 0 0 2px var(--ink); }
+.swatches button[aria-pressed="true"] span { color: var(--ink); font-weight: 700; }
+.seg { display: grid; grid-template-columns: repeat(3, 1fr); border: 1px solid var(--line); border-radius: 9px; overflow: hidden; }
+.seg button { border: 0; background: transparent; padding: 7px 0; cursor: pointer; font-weight: 600; color: var(--muted); }
+.seg button + button { border-left: 1px solid var(--line); }
+.seg button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
 .banner { padding: 10px 14px; border-radius: var(--r); background: var(--accent-soft); font-size: 13px; }
 .banner[hidden] { display: none; }
 
@@ -117,7 +155,7 @@ svg.map .inbound text { font: 600 12px var(--f-mono); fill: var(--accent); }
 .side { display: grid; gap: 18px; }
 .route-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 8px; counter-reset: stop; }
 .route-list li { display: grid; grid-template-columns: 26px 1fr auto auto; gap: 10px; align-items: center; padding: 10px 10px; border: 1px solid var(--line); border-radius: var(--r); }
-.route-list .n { width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: #fff; display: grid; place-items: center; font: 700 11px var(--f-mono); }
+.route-list .n { width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; font: 700 11px var(--f-mono); }
 .route-list .nm { font-weight: 700; line-height: 1.2; }
 .route-list .nm small { display: block; font-weight: 500; color: var(--muted); font-size: 12px; }
 .stepper { display: inline-flex; align-items: center; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
@@ -131,7 +169,7 @@ svg.map .inbound text { font: 600 12px var(--f-mono); fill: var(--accent); }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip { border: 1px solid var(--line); background: var(--surface); border-radius: 99px; padding: 5px 11px; cursor: pointer; font-size: 13px; font-weight: 600; }
 .chip:hover { border-color: var(--ink); }
-.chip.on { background: var(--accent); border-color: var(--accent); color: #fff; }
+.chip.on { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 .chip code { font: 500 10.5px var(--f-mono); opacity: .7; margin-left: 4px; }
 .addplace { display: grid; gap: 10px; margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line); }
 .addplace h3 { margin: 0; }
@@ -190,6 +228,19 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--leaf); c
 .day label { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--muted); font-weight: 700; }
 .day textarea.cell { resize: vertical; min-height: 54px; border-color: var(--line); }
 .day .cell { border-color: var(--line); }
+.photos { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 4px; }
+.photos[hidden] { display: none; }
+.photos figure { margin: 0; position: relative; aspect-ratio: 1; border-radius: 8px; overflow: hidden; background: var(--paper); cursor: zoom-in; }
+.photos img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.photos .ph-del { position: absolute; top: 4px; right: 4px; width: 24px; height: 24px; border-radius: 50%; border: 0; background: rgba(0,0,0,.55); color: #fff; cursor: pointer; font-size: 15px; line-height: 1; }
+.day { align-content: start; }
+.day .addphoto { display: inline-flex; justify-content: center; border: 1px dashed var(--line); border-radius: 8px; padding: 8px; font-size: 13px; font-weight: 600; color: var(--muted); cursor: pointer; text-transform: none; letter-spacing: 0; }
+.day .addphoto:hover { border-color: var(--accent); color: var(--accent); }
+.addphoto:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+.addphoto input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.lightbox { position: fixed; inset: 0; z-index: 20; background: rgba(8,12,16,.86); display: grid; place-items: center; gap: 14px; padding: 20px; grid-template-rows: 1fr auto; }
+.lightbox[hidden] { display: none; }
+.lightbox img { max-width: 100%; max-height: 80vh; border-radius: 10px; align-self: end; }
 
 /* savings */
 .save-chart svg { width: 100%; height: auto; display: block; }
@@ -198,6 +249,23 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--leaf); c
 .save-chart .goal { stroke: var(--accent); stroke-dasharray: 5 5; stroke-width: 1.4; }
 .save-chart text { font: 11px var(--f-body); fill: var(--muted); }
 .save-chart .grid { stroke: var(--line); }
+.people { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
+.person { display: grid; gap: 8px; border-top: 4px solid var(--pc); }
+.person .top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.person .nm { font: 650 19px var(--f-display); }
+.person .amt { font: 650 26px var(--f-display); font-variant-numeric: tabular-nums; }
+.person .meter > i { background: var(--pc); }
+.person .line { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 13px; color: var(--muted); }
+.person .line input { width: 96px; text-align: right; border: 1px solid var(--line); border-radius: 7px; padding: 5px 7px; background: var(--surface); font-variant-numeric: tabular-nums; }
+.pill { font-size: 12px; font-weight: 700; padding: 3px 9px; border-radius: 99px; white-space: nowrap; }
+.pill.ok { background: var(--leaf-soft); color: var(--leaf); }
+.pill.short { background: var(--warn-soft); color: var(--warn); }
+.pill.done { background: var(--leaf); color: var(--surface); }
+.save-chart .pl { fill: none; stroke-width: 2.4; }
+.save-chart .proj { fill: none; stroke-width: 1.6; stroke-dasharray: 4 5; opacity: .8; }
+.legend .sw { display: inline-flex; align-items: center; gap: 6px; }
+.legend .sw::before { display: none; }
+.legend .sw b { width: 14px; height: 3px; border-radius: 2px; display: inline-block; }
 .form { display: grid; grid-template-columns: 1fr 1fr 1fr auto; gap: 8px; align-items: end; }
 .form label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); font-weight: 600; }
 .form input, .form select, .field input, .field select { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--surface); width: 100%; }
@@ -234,6 +302,7 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--leaf); c
 </style>
 </head>
 <body>
+<div class="lightbox" id="lightbox" hidden><img alt="Trip photo, enlarged"><button class="btn" type="button">Close</button></div>
 <div class="gate" id="gate" hidden>
   <div class="gate-card">
     <div class="route-codes"><span>ITO</span><span class="arrow" aria-hidden="true"></span><span>EUR</span></div>
@@ -259,6 +328,16 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--leaf); c
 
   <nav class="tabs" aria-label="Planner sections">
     <a href="#map">Map</a><a href="#costs">Costs</a><a href="#days">Day by day</a><a href="#savings">Savings</a><a href="#todo">To-do</a><a href="#packing">Packing</a><a href="#trip">Trip details</a>
+    <div class="theme-wrap">
+      <button class="theme-btn" id="themeBtn" type="button" aria-expanded="false" aria-controls="themePanel"><span class="sw-dot"></span>Theme</button>
+      <div class="theme-panel" id="themePanel" hidden>
+        <h3>Color</h3>
+        <div class="swatches" id="swatches"><button type="button" data-accent="lehua" aria-label="Lehua" title="Lehua"><i style="background:linear-gradient(135deg,#D9483B 50%,#F06A5B 50%)"></i><span>Lehua</span></button><button type="button" data-accent="sunset" aria-label="Sunset" title="Sunset"><i style="background:linear-gradient(135deg,#C2610F 50%,#F5A04E 50%)"></i><span>Sunset</span></button><button type="button" data-accent="fern" aria-label="Fern" title="Fern"><i style="background:linear-gradient(135deg,#3B7A39 50%,#7CC77A 50%)"></i><span>Fern</span></button><button type="button" data-accent="ocean" aria-label="Ocean" title="Ocean"><i style="background:linear-gradient(135deg,#2461B5 50%,#6FA6F2 50%)"></i><span>Ocean</span></button><button type="button" data-accent="lagoon" aria-label="Lagoon" title="Lagoon"><i style="background:linear-gradient(135deg,#107A74 50%,#4FD1C5 50%)"></i><span>Lagoon</span></button><button type="button" data-accent="plumeria" aria-label="Plumeria" title="Plumeria"><i style="background:linear-gradient(135deg,#7646B3 50%,#B593F0 50%)"></i><span>Plumeria</span></button><button type="button" data-accent="hibiscus" aria-label="Hibiscus" title="Hibiscus"><i style="background:linear-gradient(135deg,#BE3674 50%,#F07AB0 50%)"></i><span>Hibiscus</span></button></div>
+        <h3 style="margin-top:14px">Mode</h3>
+        <div class="seg" id="modeSeg"><button type="button" data-mode="auto">Auto</button><button type="button" data-mode="light">Light</button><button type="button" data-mode="dark">Dark</button></div>
+        <p class="hint" style="margin-top:10px">Your theme is just for you. Your friends pick their own.</p>
+      </div>
+    </div>
   </nav>
   <div class="banner" id="banner" hidden></div>
 
@@ -317,19 +396,27 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--leaf); c
 
   <!-- SAVINGS -->
   <section class="view" id="v-savings">
+    <div class="card save-chart">
+      <h2>Savings</h2>
+      <p class="hint" id="saveHint"></p>
+      <div id="saveChart" style="margin-top:12px"></div>
+      <div class="legend" id="saveLegend"></div>
+    </div>
+    <div class="people" id="people"></div>
     <div class="two">
-      <div class="card save-chart"><h2>Savings</h2><p class="hint" id="saveHint"></p><div id="saveChart" style="margin-top:12px"></div></div>
-      <div class="side">
-        <div class="card">
-          <h3>Add a deposit</h3>
-          <form class="form" id="depForm">
-            <label for="depWho">Who<select id="depWho"></select></label>
-            <label for="depDate">Date<input id="depDate" type="date"></label>
-            <label for="depAmt">Amount<input id="depAmt" type="number" min="0" step="1" placeholder="200"></label>
-            <button class="btn" type="submit">Add</button>
-          </form>
-        </div>
-        <div class="card"><h3>Deposits</h3><div class="tbl-wrap"><table id="depTbl"><thead><tr><th>Date</th><th>Who</th><th class="num">Amount</th><th></th></tr></thead><tbody></tbody></table></div></div>
+      <div class="card">
+        <div class="row between"><h3 style="margin:0">Deposits</h3><div class="chips" id="depFilter"></div></div>
+        <div class="tbl-wrap" style="margin-top:8px"><table id="depTbl"><thead><tr><th>Date</th><th>Who</th><th class="num">Amount</th><th>Note</th><th></th></tr></thead><tbody></tbody></table></div>
+      </div>
+      <div class="card">
+        <h3>Add a deposit</h3>
+        <form class="form" id="depForm">
+          <label for="depWho">Who<select id="depWho"></select></label>
+          <label for="depDate">Date<input id="depDate" type="date"></label>
+          <label for="depAmt">Amount<input id="depAmt" type="number" min="0" step="1" placeholder="200"></label>
+          <button class="btn" type="submit">Add</button>
+        </form>
+        <label class="field" for="depNote" style="margin-top:8px">Note (optional)<input id="depNote" type="text" placeholder="Paycheck, bonus, sold eggs…"></label>
       </div>
     </div>
   </section>
@@ -382,7 +469,7 @@ const PACK = {
 // Starting data, written to Firebase the first time someone signs in to an empty planner.
 const PREVIEW = {"settings": {"start": "2029-06-01", "len": 14, "budget": 6000, "names": "Sally, Friend"}, "cities": {"london": {"picked": true, "order": 1, "nights": 4}, "barcelona": {"picked": true, "order": 2, "nights": 4}, "copenhagen": {"picked": true, "order": 3, "nights": 4}}, "expenses": {"e01": {"cat": "Flights", "what": "Hilo → Honolulu (example cost)", "city": "", "date": "", "est": 150, "people": "", "paid": "", "notes": "Replace with a real fare when you start pricing", "booked": false, "created": 1}, "e02": {"cat": "Flights", "what": "Long-haul to Europe", "city": "london", "date": "", "est": "", "people": "", "paid": "", "notes": "Check Atmos award space + Gold perks", "booked": false, "created": 2}, "e03": {"cat": "Trains", "what": "London → Barcelona (via Paris)", "city": "barcelona", "date": "", "est": "", "people": "", "paid": "", "notes": "Eurostar + TGV, cheapest booked early", "booked": false, "created": 3}, "e04": {"cat": "Flights", "what": "Barcelona → Copenhagen", "city": "copenhagen", "date": "", "est": "", "people": "", "paid": "", "notes": "Watch budget-airline bag fees", "booked": false, "created": 4}, "e05": {"cat": "Flights", "what": "Copenhagen → home (open-jaw)", "city": "", "date": "", "est": "", "people": "", "paid": "", "notes": "Flying home from a different city saves backtracking", "booked": false, "created": 5}, "e06": {"cat": "Lodging", "what": "Stay in London", "city": "london", "date": "", "est": "", "people": "", "paid": "", "notes": "", "booked": false, "created": 6}, "e07": {"cat": "Lodging", "what": "Stay in Barcelona", "city": "barcelona", "date": "", "est": "", "people": "", "paid": "", "notes": "", "booked": false, "created": 7}, "e08": {"cat": "Lodging", "what": "Stay in Copenhagen", "city": "copenhagen", "date": "", "est": "", "people": "", "paid": "", "notes": "", "booked": false, "created": 8}, "e09": {"cat": "Insurance & docs", "what": "Travel insurance + UK ETA / EU ETIAS", "city": "", "date": "", "est": "", "people": "", "paid": "", "notes": "Check current rules for your passport", "booked": false, "created": 9}}, "tasks": {"t01": {"text": "Agree on dates, budget and who's coming", "when": "~2 years out", "who": "", "done": false, "order": 1}, "t02": {"text": "Narrow the map to 4–5 places and an order", "when": "~18 months out", "who": "", "done": false, "order": 2}, "t03": {"text": "Check passports and renew any that expire before late 2029", "when": "~12 months out", "who": "Everyone", "done": false, "order": 3}, "t04": {"text": "Start watching fares and Atmos award space", "when": "~11 months out", "who": "", "done": false, "order": 4}, "t05": {"text": "Book long-haul flights (consider open-jaw)", "when": "~9–10 months out", "who": "", "done": false, "order": 5}, "t06": {"text": "Book lodging with free cancellation", "when": "~6–9 months out", "who": "", "done": false, "order": 6}, "t07": {"text": "Book trains when sales open", "when": "~3–6 months out", "who": "", "done": false, "order": 7}, "t08": {"text": "Apply for UK ETA / EU ETIAS if required (check official sites)", "when": "~2–3 months out", "who": "Everyone", "done": false, "order": 8}, "t09": {"text": "Reserve timed-entry sights (Sagrada Família etc.)", "when": "~2–3 months out", "who": "", "done": false, "order": 9}, "t10": {"text": "Buy travel insurance", "when": "After booking flights", "who": "", "done": false, "order": 10}, "t11": {"text": "Get a no-foreign-fee card and tell the bank", "when": "~1 month out", "who": "Everyone", "done": false, "order": 11}, "t12": {"text": "Set up an eSIM or international plan", "when": "~2 weeks out", "who": "Everyone", "done": false, "order": 12}, "t13": {"text": "Line up a chicken sitter and a mail hold", "when": "~2 weeks out", "who": "Sally", "done": false, "order": 13}}, "days": {"d01": {"city": "", "stay": "On the plane", "plan": "Depart Hilo: ITO → HNL → Europe"}, "d02": {"city": "london", "stay": "", "plan": "Land, check in, early night to beat jet lag"}, "d14": {"city": "copenhagen", "stay": "", "plan": "Fly home, arriving in Hilo the same day"}}, "deposits": {}};
 
-const S = { places: {}, settings: {}, cities: {}, expenses: {}, tasks: {}, days: {}, deposits: {}, pack: { got: {}, extra: {} } };
+const S = { photos: {}, places: {}, settings: {}, cities: {}, expenses: {}, tasks: {}, days: {}, deposits: {}, pack: { got: {}, extra: {} } };
 let fs = null, uid = null, live = false;
 // built-in cities plus places added by the group
 const R = Math.PI / 180, DPHI = -50 * R, CD = Math.cos(DPHI), SD = Math.sin(DPHI);
@@ -465,9 +552,10 @@ function renderStats() {
   $("#mCost").style.width = Math.min(100, budget ? est / budget * 100 : 0) + "%";
   $("#mCost").style.background = est > budget ? "var(--warn)" : "";
   const saved = Object.values(S.deposits).reduce((a, d) => a + num(d.amount), 0);
+  const saveGoal = savers().reduce((a, n) => a + goalOf(n), 0);
   $("#sSaved").textContent = money(saved);
-  $("#sSavedSub").textContent = budget ? `${Math.round(saved / budget * 100)}% of the group goal` : "";
-  $("#mSaved").style.width = Math.min(100, budget ? saved / budget * 100 : 0) + "%";
+  $("#sSavedSub").textContent = saveGoal ? `${Math.round(saved / saveGoal * 100)}% of everyone's goals` : "";
+  $("#mSaved").style.width = Math.min(100, saveGoal ? saved / saveGoal * 100 : 0) + "%";
 }
 
 // ---------- MAP ----------
@@ -618,51 +706,167 @@ function renderDays() {
       <label for="dc-${k}">City</label><select class="cell" id="dc-${k}" data-f="city">${cityOptions(d.city)}</select>
       <label for="ds-${k}">Sleeping at</label><input class="cell" id="ds-${k}" data-f="stay" value="${esc(d.stay)}" placeholder="${i === 0 ? "On the plane" : "Hotel / apartment"}">
       <label for="dp-${k}">Plan</label><textarea class="cell" id="dp-${k}" data-f="plan" placeholder="${i === 0 ? "ITO → HNL → Europe" : i === st.len - 1 ? "Fly home. Arrive Hilo the same day thanks to the time difference" : "Morning, afternoon, evening…"}">${esc(d.plan)}</textarea>
+      <div class="photos" data-k="${k}"></div>
+      <label class="addphoto" for="df-${k}">＋ Add photos<input id="df-${k}" type="file" accept="image/*" multiple data-photo="${k}"></label>
     </div>`;
   }
   $("#days").innerHTML = h;
+  fillPhotos();
 }
+// photos are shrunk in the browser and stored in the database (Firebase's free plan has no file storage)
+const imgCache = {};
+function fillPhotos() {
+  const by = {};
+  for (const [id, ph] of Object.entries(S.photos)) if (ph.day && typeof ph.data === "string" && ph.data.startsWith("data:image/")) (by[ph.day] = by[ph.day] || []).push([id, ph]);
+  document.querySelectorAll("#days .photos").forEach(box => {
+    const list = (by[box.dataset.k] || []).sort((a, b) => (a[1].created || 0) - (b[1].created || 0));
+    box.replaceChildren(...list.map(([id, ph]) => {
+      let fig = imgCache[id];
+      if (!fig || fig.dataset.src !== ph.data.slice(-40)) {
+        fig = document.createElement("figure"); fig.dataset.id = id; fig.dataset.src = ph.data.slice(-40);
+        const img = new Image(); img.src = ph.data; img.alt = ph.caption || "Trip photo"; img.loading = "lazy";
+        const del = document.createElement("button"); del.type = "button"; del.className = "ph-del"; del.textContent = "×"; del.setAttribute("aria-label", "Remove photo");
+        fig.append(img, del); imgCache[id] = fig;
+      }
+      return fig;
+    }));
+    box.hidden = !list.length;
+  });
+}
+function shrink(file) {
+  return new Promise((res, rej) => {
+    const url = URL.createObjectURL(file), img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      let w = img.naturalWidth, h = img.naturalHeight, max = 1280, out = "";
+      for (let pass = 0; pass < 6; pass++) {
+        const k = Math.min(1, max / Math.max(w, h)), cw = Math.round(w * k), ch = Math.round(h * k);
+        const c = document.createElement("canvas"); c.width = cw; c.height = ch; c.getContext("2d").drawImage(img, 0, 0, cw, ch);
+        out = c.toDataURL("image/jpeg", pass < 3 ? 0.8 - pass * 0.1 : 0.6);
+        if (out.length < 600000) return res(out);
+        max = Math.round(max * 0.8);
+      }
+      res(out);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); rej(new Error("That file isn't an image this browser can read.")); };
+    img.src = url;
+  });
+}
+$("#days").addEventListener("change", async e => {
+  const k = e.target.dataset.photo; if (!k) return;
+  const files = [...e.target.files]; e.target.value = "";
+  const have = Object.values(S.photos).filter(p => p.day === k).length;
+  const room = Math.max(0, 6 - have);
+  if (files.length > room) { $("#banner").textContent = `Each day holds up to 6 photos, so only the first ${room} were added.`; $("#banner").hidden = false; }
+  for (const f of files.slice(0, room)) {
+    try {
+      const data = await shrink(f);
+      const id = live ? doc(collection(fs, "photos")).id : "x" + Date.now() + Math.random().toString(36).slice(2, 5);
+      S.photos = { ...S.photos, [id]: { day: k, data, created: Date.now() } };
+      if (live) setDoc(doc(fs, "photos/" + id), S.photos[id]).catch(note);
+      fillPhotos();
+    } catch (err) { $("#banner").textContent = err.message; $("#banner").hidden = false; }
+  }
+});
+$("#days").addEventListener("click", e => {
+  const del = e.target.closest(".ph-del"), fig = e.target.closest("figure");
+  if (del && fig) { const id = fig.dataset.id, rest = { ...S.photos }; delete rest[id]; S.photos = rest; delete imgCache[id]; remove("photos/" + id); fillPhotos(); return; }
+  if (fig) { const lb = $("#lightbox"); lb.querySelector("img").src = fig.querySelector("img").src; lb.hidden = false; lb.querySelector("button").focus(); }
+});
 $("#days").addEventListener("input", e => {
   const card = e.target.closest(".day"); if (!card) return;
   const k = card.dataset.k; S.days[k] = { ...S.days[k], [e.target.dataset.f]: e.target.value };
   save("days/" + k, S.days[k], e.target.tagName === "SELECT" ? 0 : 600);
 });
 
-// ---------- SAVINGS ----------
+// ---------- SAVINGS (per person) ----------
+const PCOL = ["--p1", "--p2", "--p3", "--p4", "--p5", "--p6"];
+let depFilter = "";
+function savers() {
+  const list = names().length ? names() : ["Me"];
+  for (const d of Object.values(S.deposits)) if (d.who && !list.includes(d.who)) list.push(d.who);
+  return list;
+}
+const goalOf = n => { const g = (set().goals || {})[n]; return g === undefined || g === "" ? num(set().budget) : num(g); };
+const planOf = n => num((set().plans || {})[n]);
+function monthsLeft() { const now = new Date(), st = new Date(set().start + "T00:00:00"); return Math.max(0, (st.getFullYear() - now.getFullYear()) * 12 + st.getMonth() - now.getMonth()); }
+function personStats(n) {
+  const deps = Object.values(S.deposits).filter(d => d.who === n);
+  const saved = deps.reduce((a, d) => a + num(d.amount), 0), goal = goalOf(n), plan = planOf(n), m = monthsLeft();
+  const projected = saved + plan * m, needMo = m ? Math.max(0, goal - saved) / m : Math.max(0, goal - saved);
+  return { deps, saved, goal, plan, m, projected, needMo };
+}
 function renderSavings() {
-  const st = set(), goal = st.budget * travelers();
-  const deps = Object.entries(S.deposits).sort((a, b) => (a[1].date || "").localeCompare(b[1].date || ""));
-  const saved = deps.reduce((a, [, d]) => a + num(d.amount), 0);
+  const people = savers(), st = set();
+  const stats = Object.fromEntries(people.map(n => [n, personStats(n)]));
+  const tot = people.reduce((a, n) => a + stats[n].saved, 0), goal = people.reduce((a, n) => a + stats[n].goal, 0);
+  $("#saveHint").textContent = `${money(tot)} of ${money(goal)} saved together, with ${monthsLeft()} months until takeoff. Each person has their own goal and monthly plan below. The chart shows everyone as a percentage of their own goal.`;
+  // person cards
+  const a = document.activeElement, focusId = a && a.closest && a.closest("#people") ? a.id : null;
+  $("#people").innerHTML = people.map((n, i) => {
+    const x = stats[n], pct = x.goal ? x.saved / x.goal : 0, c = `var(${PCOL[i % PCOL.length]})`;
+    const pill = x.saved >= x.goal && x.goal > 0 ? `<span class="pill done">Goal reached</span>`
+      : !x.plan ? `<span class="pill short">Needs ${money(x.needMo)}/mo</span>`
+      : x.projected >= x.goal ? `<span class="pill ok">On track</span>` : `<span class="pill short">Short ${money(x.goal - x.projected)}</span>`;
+    const sid = "p" + i;
+    return `<div class="card person" style="--pc:${c}" data-n="${esc(n)}">
+      <div class="top"><span class="nm">${esc(n)}</span>${pill}</div>
+      <div><span class="amt">${money(x.saved)}</span> <span class="hint" style="display:inline">${Math.round(pct * 100)}% of goal</span></div>
+      <div class="meter"><i style="width:${Math.min(100, pct * 100)}%"></i></div>
+      <label class="line" for="g-${sid}">Goal <input id="g-${sid}" type="number" min="0" step="100" data-f="goals" value="${x.goal}"></label>
+      <label class="line" for="m-${sid}">Plans to save / month <input id="m-${sid}" type="number" min="0" step="10" data-f="plans" value="${x.plan || ""}" placeholder="0"></label>
+      <div class="line"><span>At that pace by takeoff</span><b style="color:var(--ink)">${x.plan ? money(x.projected) : "—"}</b></div>
+      <div class="line"><span>To hit the goal</span><b style="color:var(--ink)">${money(x.needMo)}/mo</b></div>
+    </div>`;
+  }).join("");
+  if (focusId) document.getElementById(focusId)?.focus();
+  // chart: % of own goal over time, with a dashed projection from today to takeoff
+  const W = 1000, H = 330, P = { l: 48, r: 16, t: 20, b: 30 };
   const now = new Date(), start = new Date(st.start + "T00:00:00");
-  const months = Math.max(1, (start.getFullYear() - now.getFullYear()) * 12 + start.getMonth() - now.getMonth());
-  const need = Math.max(0, goal - saved) / months;
-  $("#saveHint").textContent = `${money(saved)} of ${money(goal)} saved as a group. To get there by takeoff, that's about ${money(need)} a month together, or ${money(need / travelers())} each, for the next ${months} months.`;
-  // chart: cumulative by date, from first deposit (or today) to trip start
-  const W = 640, H = 240, P = { l: 52, r: 14, t: 14, b: 28 };
-  const t0 = deps.length ? new Date(Math.min(new Date(deps[0][1].date + "T00:00:00"), now)) : now, t1 = start;
+  const dates = Object.values(S.deposits).map(d => new Date((d.date || "") + "T00:00:00")).filter(d => !isNaN(d));
+  const t0 = new Date(Math.min(now, ...dates)), t1 = start;
   const x = t => P.l + (t - t0) / Math.max(1, t1 - t0) * (W - P.l - P.r);
-  const top = Math.max(goal, saved) * 1.08 || 1, y = v => H - P.b - v / top * (H - P.t - P.b);
-  let cum = 0; const pts = [[x(t0), y(0)]];
-  deps.forEach(([, d]) => { const t = new Date(d.date + "T00:00:00"); pts.push([x(t), y(cum)]); cum += num(d.amount); pts.push([x(t), y(cum)]); });
-  pts.push([x(Math.max(now, t0)), y(cum)]);
-  const line = pts.map((p, i) => (i ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ");
-  const area = line + ` L ${pts[pts.length - 1][0].toFixed(1)} ${y(0)} Z`;
-  let grid = ""; for (let k = 0; k <= 4; k++) { const v = top / 1.08 * k / 4; grid += `<line class="grid" x1="${P.l}" x2="${W - P.r}" y1="${y(v)}" y2="${y(v)}"/><text x="${P.l - 8}" y="${y(v) + 4}" text-anchor="end">${money(v)}</text>`; }
-  const yr = (dd) => `<text x="${x(dd)}" y="${H - 8}" text-anchor="middle">${dd.getFullYear()}</text>`;
-  let ticks = ""; for (let yv = t0.getFullYear() + 1; yv <= t1.getFullYear(); yv++) ticks += yr(new Date(yv, 0, 1));
-  const last = pts[pts.length - 1];
-  $("#saveChart").innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Savings over time against the goal">${grid}<line class="goal" x1="${P.l}" x2="${W - P.r}" y1="${y(goal)}" y2="${y(goal)}"/><text x="${W - P.r}" y="${y(goal) - 6}" text-anchor="end" style="fill:var(--accent)">goal ${money(goal)}</text><path class="area" d="${area}"/><path class="ln" d="${line}"/><circle cx="${last[0]}" cy="${last[1]}" r="4.5" fill="var(--leaf)"/>${ticks}<text x="${W - P.r}" y="${H - 8}" text-anchor="end">✈ ${fmtD(start, { month: "short", year: "numeric" })}</text></svg>`;
-  $("#depTbl tbody").innerHTML = deps.length ? deps.slice().reverse().map(([id, d]) => `<tr data-id="${id}"><td>${esc(d.date)}</td><td>${esc(d.who)}</td><td class="num"><b>${money(num(d.amount))}</b></td><td><button class="del" type="button" data-del aria-label="Delete deposit">×</button></td></tr>`).join("") : `<tr><td colspan="4"><div class="empty">No deposits yet.</div></td></tr>`;
+  let top = 1; people.forEach(n => { const s = stats[n]; if (s.goal) top = Math.max(top, s.saved / s.goal, s.plan ? s.projected / s.goal : 0); });
+  top = Math.min(2, Math.max(1.1, top * 1.05));
+  const y = v => H - P.b - v / top * (H - P.t - P.b);
+  let grid = ""; for (let k = 0; k <= 4; k++) { const v = k * 0.25; if (v > top) break; grid += `<line class="grid" x1="${P.l}" x2="${W - P.r}" y1="${y(v)}" y2="${y(v)}"/><text x="${P.l - 8}" y="${y(v) + 4}" text-anchor="end">${Math.round(v * 100)}%</text>`; }
+  let lines = "", dots = "";
+  people.forEach((n, i) => {
+    const s = stats[n]; if (!s.goal) return;
+    const col = `var(${PCOL[i % PCOL.length]})`;
+    const deps = s.deps.slice().sort((a, b) => (a.date || "").localeCompare(b.date || ""));
+    let cum = 0; const pts = [[x(t0), y(0)]];
+    deps.forEach(d => { const t = new Date(d.date + "T00:00:00"); if (isNaN(t)) return; pts.push([x(t), y(cum / s.goal)]); cum += num(d.amount); pts.push([x(t), y(cum / s.goal)]); });
+    pts.push([x(now), y(cum / s.goal)]);
+    lines += `<path class="pl" style="stroke:${col}" d="${pts.map((p, j) => (j ? "L" : "M") + p[0].toFixed(1) + " " + p[1].toFixed(1)).join(" ")}"/>`;
+    if (s.plan) lines += `<path class="proj" style="stroke:${col}" d="M ${x(now).toFixed(1)} ${y(cum / s.goal).toFixed(1)} L ${x(t1).toFixed(1)} ${y(Math.min(top, s.projected / s.goal)).toFixed(1)}"/>`;
+    dots += `<circle cx="${x(now).toFixed(1)}" cy="${y(cum / s.goal).toFixed(1)}" r="4.5" style="fill:${col}"/>`;
+  });
+  let ticks = ""; for (let yv = t0.getFullYear() + 1; yv <= t1.getFullYear(); yv++) { const d = new Date(yv, 0, 1); if (x(d) < W - 70) ticks += `<text x="${x(d)}" y="${H - 8}" text-anchor="middle">${yv}</text>`; }
+  $("#saveChart").innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Each person's savings as a percentage of their goal">${grid}<line class="goal" x1="${P.l}" x2="${W - P.r}" y1="${y(1)}" y2="${y(1)}"/><text x="${W - P.r}" y="${y(1) - 6}" text-anchor="end" style="fill:var(--accent)">goal</text>${lines}${dots}${ticks}<text x="${W - P.r}" y="${H - 8}" text-anchor="end">✈ ${fmtD(start, { month: "short", year: "numeric" })}</text></svg>`;
+  $("#saveLegend").innerHTML = people.map((n, i) => `<span class="sw"><b style="background:var(${PCOL[i % PCOL.length]})"></b>${esc(n)}</span>`).join("") + `<span class="sw"><b style="background:repeating-linear-gradient(90deg,var(--muted) 0 3px,transparent 3px 6px)"></b>at their monthly plan</span>`;
+  // deposits
+  $("#depFilter").innerHTML = ["", ...people].map(n => `<button type="button" class="chip ${depFilter === n ? "on" : ""}" data-n="${esc(n)}">${n ? esc(n) : "Everyone"}</button>`).join("");
+  const deps = Object.entries(S.deposits).filter(([, d]) => !depFilter || d.who === depFilter).sort((a, b) => (b[1].date || "").localeCompare(a[1].date || ""));
+  $("#depTbl tbody").innerHTML = deps.length ? deps.map(([id, d]) => `<tr data-id="${id}"><td>${esc(d.date)}</td><td>${esc(d.who)}</td><td class="num"><b>${money(num(d.amount))}</b></td><td class="hint">${esc(d.note)}</td><td><button class="del" type="button" data-del aria-label="Delete deposit">×</button></td></tr>`).join("") : `<tr><td colspan="5"><div class="empty">No deposits yet.</div></td></tr>`;
   const who = $("#depWho"), keep = who.value;
-  who.innerHTML = (names().length ? names() : ["Me"]).map(n => `<option>${esc(n)}</option>`).join("");
-  if (keep) who.value = keep;
+  who.innerHTML = people.map(n => `<option>${esc(n)}</option>`).join("");
+  if (keep && people.includes(keep)) who.value = keep;
   if (!$("#depDate").value) $("#depDate").value = new Date().toISOString().slice(0, 10);
 }
+$("#people").addEventListener("input", e => {
+  const f = e.target.dataset.f; if (!f) return;
+  const n = e.target.closest(".person").dataset.n, cur = set();
+  S.settings = { ...cur, [f]: { ...(cur[f] || {}), [n]: e.target.value === "" ? "" : num(e.target.value) } };
+  save("planner/settings", S.settings, 700);
+});
+$("#people").addEventListener("change", () => { renderSavings(); renderStats(); });
+$("#depFilter").addEventListener("click", e => { const b = e.target.closest(".chip"); if (!b) return; depFilter = b.dataset.n; renderSavings(); });
 $("#depForm").addEventListener("submit", e => {
   e.preventDefault(); const amt = num($("#depAmt").value); if (!amt) return;
   const id = live ? doc(collection(fs, "deposits")).id : "x" + Date.now();
-  S.deposits[id] = { who: $("#depWho").value, date: $("#depDate").value, amount: amt };
-  save("deposits/" + id, S.deposits[id], 0); $("#depAmt").value = ""; renderSavings(); renderStats();
+  S.deposits[id] = { who: $("#depWho").value, date: $("#depDate").value, amount: amt, note: $("#depNote").value.trim().slice(0, 80) };
+  save("deposits/" + id, S.deposits[id], 0); $("#depAmt").value = ""; $("#depNote").value = ""; renderSavings(); renderStats();
 });
 $("#depTbl").addEventListener("click", e => { if (e.target.closest("[data-del]")) { const id = e.target.closest("tr").dataset.id; delete S.deposits[id]; remove("deposits/" + id); renderSavings(); renderStats(); } });
 
@@ -795,11 +999,41 @@ window.addEventListener("hashchange", route);
 let pendingRender = false;
 function renderAll() {
   const a = document.activeElement;
-  if (a && a.matches && a.matches("input:not([type=checkbox]), textarea, select") && !a.closest("#v-trip") && !a.closest(".pack")) { pendingRender = true; renderStats(); renderCostSummary(); renderMap(); return; }
+  if (a && a.matches && a.matches("input:not([type=checkbox]):not([type=file]), textarea, select") && !a.closest("#v-trip") && !a.closest(".pack")) { pendingRender = true; renderStats(); renderCostSummary(); renderMap(); return; }
   pendingRender = false;
   renderStats(); renderMap(); renderCosts(); renderDays(); renderSavings(); renderTasks(); renderTrip();
 }
 document.addEventListener("focusout", () => setTimeout(() => { if (pendingRender) renderAll(); }, 0));
+
+$("#lightbox").addEventListener("click", e => { if (e.target.tagName !== "IMG") $("#lightbox").hidden = true; });
+document.addEventListener("keydown", e => { if (e.key === "Escape") { $("#lightbox").hidden = true; $("#themePanel").hidden = true; $("#themeBtn").setAttribute("aria-expanded", "false"); } });
+
+// ---------- THEME (per person, remembered on this device and in your account) ----------
+let theme = { accent: "lehua", mode: "auto" };
+try { theme = { ...theme, ...JSON.parse(localStorage.getItem("e29-theme") || "{}") }; } catch {}
+const darkMQ = matchMedia("(prefers-color-scheme: dark)");
+function applyTheme() {
+  const r = document.documentElement;
+  r.dataset.accent = theme.accent;
+  r.dataset.theme = theme.mode === "auto" ? (darkMQ.matches ? "dark" : "light") : theme.mode;
+  document.querySelectorAll("#swatches button").forEach(b => b.setAttribute("aria-pressed", b.dataset.accent === theme.accent));
+  document.querySelectorAll("#modeSeg button").forEach(b => b.setAttribute("aria-pressed", b.dataset.mode === theme.mode));
+  const tc = document.querySelector('meta[name="theme-color"]'); if (tc) tc.content = r.dataset.theme === "dark" ? "#121A21" : "#EEF2F1";
+}
+function setTheme(t) {
+  theme = { ...theme, ...t }; applyTheme();
+  try { localStorage.setItem("e29-theme", JSON.stringify(theme)); } catch {}
+  if (live && uid) save(`users/${uid}/lists/prefs`, { theme }, 300);
+}
+darkMQ.addEventListener?.("change", applyTheme);
+$("#themeBtn").addEventListener("click", e => { const p = $("#themePanel"); p.hidden = !p.hidden; $("#themeBtn").setAttribute("aria-expanded", String(!p.hidden)); e.stopPropagation(); });
+$("#themePanel").addEventListener("click", e => {
+  e.stopPropagation();
+  const a = e.target.closest("[data-accent]"), m = e.target.closest("[data-mode]");
+  if (a) setTheme({ accent: a.dataset.accent }); if (m) setTheme({ mode: m.dataset.mode });
+});
+document.addEventListener("click", () => { $("#themePanel").hidden = true; $("#themeBtn").setAttribute("aria-expanded", "false"); });
+applyTheme();
 
 buildMap(); route();
 // render the preview straight away so the page is complete at rest; swap to shared data when it arrives
@@ -861,7 +1095,7 @@ async function seedIfEmpty() {
 function start(user) {
   uid = user.uid; live = true;
   $("#whoAmI").textContent = "Signed in as " + user.email;
-  for (const k of ["places", "settings", "cities", "expenses", "tasks", "days", "deposits"]) S[k] = {};
+  for (const k of ["photos", "places", "settings", "cities", "expenses", "tasks", "days", "deposits"]) S[k] = {};
   S.pack = { got: {}, extra: {} };
   renderAll(); renderPacking(); showOffline();
   const err = e => { if (e.code === "permission-denied") { gate.hidden = false; $("#gateMsg").textContent = `${user.email} isn't on this planner's guest list. Sign out and use the invited account.`; $("#signIn").textContent = "Use a different account"; } else note(e); };
@@ -871,7 +1105,8 @@ function start(user) {
     for (const p of Object.keys(latest)) if (p.startsWith(name + "/")) o[p.slice(name.length + 1)] = latest[p];
     S[name] = o; renderAll();
   }, err);
-  ["places", "cities", "expenses", "tasks", "days", "deposits"].forEach(n => unsubs.push(coll(n)));
+  ["photos", "places", "cities", "expenses", "tasks", "days", "deposits"].forEach(n => unsubs.push(coll(n)));
+  unsubs.push(onSnapshot(doc(fs, `users/${user.uid}/lists/prefs`), s => { const t = s.exists() && s.data().theme; if (t && !latest[`users/${user.uid}/lists/prefs`] && (t.accent !== theme.accent || t.mode !== theme.mode)) { theme = { ...theme, ...t }; applyTheme(); try { localStorage.setItem("e29-theme", JSON.stringify(theme)); } catch {} } }, () => {}));
   unsubs.push(onSnapshot(doc(fs, packPath()), s => { if (s.exists() && !latest[packPath()]) { const d = s.data(); S.pack = { got: { ...(d.got || {}) }, extra: JSON.parse(JSON.stringify(d.extra || {})) }; renderPacking(); } }, () => {}));
   seedIfEmpty();
 }
