@@ -216,6 +216,19 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--leaf); c
 .row.between { justify-content: space-between; }
 .total { font: 650 20px var(--f-display); }
 .stops { display: grid; gap: 4px; min-width: 230px; }
+.sched-sum { display: flex; gap: 8px; align-items: center; min-width: 190px; font-size: 13px; font-variant-numeric: tabular-nums; }
+.sched-sum .tag { color: var(--ink); }
+.dnote { font-size: 11.5px; color: var(--warn); font-weight: 600; padding-left: 7px; }
+.dnote:empty { display: none; }
+tr.detail td { background: var(--paper); border-bottom: 1px solid var(--line); }
+.sched { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; padding: 8px 0 2px; }
+.detail-in { position: sticky; left: 8px; width: min(1080px, calc(100vw - 130px)); }
+.sched .field { font-size: 12px; }
+.sched input { border: 1px solid var(--line); border-radius: 7px; padding: 6px 8px; background: var(--surface); width: 100%; min-width: 0; font-weight: 400; color: var(--ink); }
+.dt2 { display: grid; grid-template-columns: 1.4fr 1fr; gap: 6px; }
+.sched .field.wide { grid-column: span 2; }
+@media (max-width: 480px) { .sched .field.wide { grid-column: 1 / -1; } }
+.trip-flights { margin-top: 16px; padding: 12px 14px; border-radius: 10px; background: var(--paper); display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; font-size: 13.5px; }
 #v-costs .two { grid-template-columns: minmax(0, 1fr); }
 #v-costs .two > * { min-width: 0; }
 #v-costs .two > .side { grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); align-items: start; }
@@ -229,6 +242,7 @@ input[type="checkbox"] { width: 18px; height: 18px; accent-color: var(--leaf); c
 .onday { display: grid; gap: 4px; }
 .onday div { font-size: 12.5px; padding: 6px 8px; border-radius: 8px; background: var(--paper); line-height: 1.35; }
 .onday b { color: var(--accent); font-weight: 700; margin-right: 4px; }
+.onday .when { font-family: var(--f-mono); font-size: 11.5px; }
 .cat-bars { display: grid; gap: 8px; }
 .cat-bar { display: grid; grid-template-columns: 130px 1fr 90px; gap: 10px; align-items: center; font-size: 13px; }
 .cat-bar .track { height: 10px; background: var(--paper); border-radius: 99px; overflow: hidden; display: flex; }
@@ -504,9 +518,9 @@ svg.map .mpin text { font: 700 11px var(--f-body); fill: var(--ink); paint-order
   <section class="view" id="v-costs">
     <div class="two">
       <div class="card">
-        <div class="row between"><div><h2>Costs</h2><p class="hint">Flights, trains, stays and the rest. Total = per person × people. Give a flight or train a date and it shows up on that day, layovers included.</p></div><button class="btn" id="addExp" type="button">Add a cost</button></div>
+        <div class="row between"><div><h2>Costs</h2><p class="hint">Flights, trains, stays and the rest. Total = per person × people. Open <b>Times</b> on a flight or train to add departure and arrival times, flight numbers and confirmations; it then shows up on the right days, layovers included.</p></div><button class="btn" id="addExp" type="button">Add a cost</button></div>
         <div class="tbl-wrap" style="margin-top:12px">
-          <table id="expTbl"><thead><tr><th>Booked</th><th>Category</th><th>What</th><th>City</th><th>Date</th><th>Layovers</th><th class="num">Per person</th><th class="num">People</th><th class="num">Total</th><th class="num">Paid</th><th>Notes</th><th></th></tr></thead><tbody></tbody></table>
+          <table id="expTbl"><thead><tr><th>Booked</th><th>Category</th><th>What</th><th>City</th><th>Date</th><th>Schedule</th><th>Layovers</th><th class="num">Per person</th><th class="num">People</th><th class="num">Total</th><th class="num">Paid</th><th>Notes</th><th></th></tr></thead><tbody></tbody></table>
         </div>
       </div>
       <div class="side">
@@ -574,6 +588,7 @@ svg.map .mpin text { font: 700 11px var(--f-body); fill: var(--ink); paint-order
         <label class="field" for="fBudget">Budget per person ($)<input id="fBudget" type="number" min="0" step="100"></label>
         <label class="field" for="fNames">Who's going (comma separated)<input id="fNames" type="text" placeholder="Sally, Kim, Leilani"></label>
       </div>
+      <div class="trip-flights" id="tripFlights" hidden></div>
       <div class="row between" style="margin-top:18px;padding-top:14px;border-top:1px solid var(--line)"><span class="hint" id="whoAmI"></span><button class="btn ghost" id="signOut" type="button">Sign out</button></div>
     </div>
   </section>
@@ -879,6 +894,41 @@ function parseDur(t) {
   return Math.round(mins);
 }
 const fmtDur = m => m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? " " + (m % 60) + "m" : ""}` : `${m}m`;
+const isoOf = d => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+const tripRange = () => [isoOf(dayDate(0)), isoOf(dayDate(set().len - 1))];
+const shortD = iso => { if (!iso) return ""; const d = new Date(iso + "T12:00:00"); return isNaN(d) ? "" : d.toLocaleDateString("en-US", { month: "short", day: "numeric" }); };
+const daysBetween = (a, b) => Math.round((new Date(b + "T12:00:00") - new Date(a + "T12:00:00")) / 864e5);
+function dateNote(e) {
+  if (!TRANSPORT.includes(e.cat)) return "";
+  const [a, b] = tripRange(), out = d => d && (d < a || d > b);
+  return out(e.date) || out(e.arrDate) ? `Outside trip dates (${shortD(a)}–${shortD(b)})` : "";
+}
+function schedLine(e) {
+  const dep = [e.from, e.depTime].filter(Boolean).join(" "), arr = [e.to, e.arrTime].filter(Boolean).join(" ");
+  const plus = e.date && e.arrDate && e.arrDate !== e.date ? ` (+${daysBetween(e.date, e.arrDate)})` : "";
+  if (!dep && !arr) return "";
+  return `${dep || "?"} → ${arr || "?"}${plus}`;
+}
+const openSched = new Set();
+function schedHtml(id, e) {
+  if (!TRANSPORT.includes(e.cat)) return `<span class="hint">—</span>`;
+  const line = schedLine(e), num = e.num ? `<span class="tag">${esc(e.num)}</span> ` : "";
+  return `<div class="sched-sum">${line || num ? `<span>${num}${esc(line)}</span>` : `<span class="hint">No times yet</span>`}<button type="button" class="addstop" data-sched aria-expanded="${openSched.has(id)}">${openSched.has(id) ? "Close" : "Times"}</button></div>`;
+}
+function detailRow(id, e) {
+  if (!TRANSPORT.includes(e.cat) || !openSched.has(id)) return "";
+  const v = k => esc(e[k] || ""), kind = e.cat === "Flights" ? "Flight" : e.cat === "Trains" ? "Train" : "Booking";
+  const ph = e.cat === "Flights" ? ["ITO", "LHR", "HA 21"] : e.cat === "Trains" ? ["London St Pancras", "Paris Nord", "Eurostar 9014"] : ["Pickup", "Drop-off", "Ref"];
+  return `<tr class="detail" data-detail="${id}"><td colspan="13"><div class="detail-in"><div class="sched">
+    <div class="field wide"><span>Departs</span><span class="dt2"><input id="x-date-${id}" type="date" data-df="date" value="${v("date")}" aria-label="Departure date"><input id="x-dt-${id}" type="time" data-df="depTime" value="${v("depTime")}" aria-label="Departure time"></span></div>
+    <div class="field wide"><span>Arrives</span><span class="dt2"><input id="x-ad-${id}" type="date" data-df="arrDate" value="${v("arrDate")}" aria-label="Arrival date"><input id="x-at-${id}" type="time" data-df="arrTime" value="${v("arrTime")}" aria-label="Arrival time"></span></div>
+    <label class="field" for="x-from-${id}">From<input id="x-from-${id}" data-df="from" value="${v("from")}" maxlength="40" placeholder="${ph[0]}"></label>
+    <label class="field" for="x-to-${id}">To<input id="x-to-${id}" data-df="to" value="${v("to")}" maxlength="40" placeholder="${ph[1]}"></label>
+    <label class="field" for="x-num-${id}">${kind} number<input id="x-num-${id}" data-df="num" value="${v("num")}" maxlength="20" placeholder="${ph[2]}"></label>
+    <label class="field" for="x-conf-${id}">Confirmation<input id="x-conf-${id}" data-df="conf" value="${v("conf")}" maxlength="30" placeholder="ABC123"></label>
+    <label class="field" for="x-seat-${id}">Seats<input id="x-seat-${id}" data-df="seats" value="${v("seats")}" maxlength="30" placeholder="32A, 32B"></label>
+  </div><p class="hint" style="margin:6px 0 4px">Times are local to each airport or station. Overnight? Set the arrival date to the next day and it shows on both days.</p></div></td></tr>`;
+}
 function stopSummary(st) {
   const n = st.filter(x => (x.at || "").trim()).length, tot = st.reduce((a, x) => a + parseDur(x.dur), 0);
   if (!n) return "";
@@ -909,15 +959,16 @@ function renderCosts() {
     <td><select class="cell" id="ec-${id}" data-f="cat" aria-label="Category">${CATS.map(c => `<option ${c === (e.cat || "Other") ? "selected" : ""}>${c}</option>`).join("")}</select></td>
     <td><input class="cell" id="ew-${id}" data-f="what" value="${esc(e.what)}" placeholder="e.g. Eurostar London → Paris" style="min-width:200px" aria-label="What"></td>
     <td><select class="cell" id="ey-${id}" data-f="city" aria-label="City" style="min-width:120px">${cityOptions(e.city)}</select></td>
-    <td><input class="cell" id="ed-${id}" type="date" data-f="date" value="${esc(e.date)}" aria-label="Date"></td>
+    <td><input class="cell" id="ed-${id}" type="date" data-f="date" value="${esc(e.date)}" aria-label="Date"><div class="dnote" data-dnote>${dateNote(e)}</div></td>
+    <td class="sched-cell">${schedHtml(id, e)}</td>
     <td class="stops-cell">${stopsHtml(id, e)}</td>
     <td class="num"><input class="cell" id="ee-${id}" type="number" min="0" step="1" data-f="est" value="${e.est ?? ""}" style="width:90px" aria-label="Estimated per person"></td>
     <td class="num"><input class="cell" id="ep-${id}" type="number" min="0" step="1" data-f="people" value="${e.people ?? ""}" placeholder="${travelers()}" style="width:60px" aria-label="People"></td>
     <td class="num"><b data-total>${money(rowTotal(e))}</b></td>
     <td class="num"><input class="cell" id="ea-${id}" type="number" min="0" step="1" data-f="paid" value="${e.paid ?? ""}" style="width:90px" aria-label="Paid so far"></td>
     <td><input class="cell" id="en-${id}" data-f="notes" value="${esc(e.notes)}" style="min-width:180px" aria-label="Notes"></td>
-    <td><button class="del" type="button" data-del aria-label="Delete row">×</button></td></tr>`).join("")
-    : `<tr><td colspan="12"><div class="empty">No costs yet. Add the flight out of Hilo to get started.</div></td></tr>`;
+    <td><button class="del" type="button" data-del aria-label="Delete row">×</button></td></tr>${detailRow(id, e)}`).join("")
+    : `<tr><td colspan="13"><div class="empty">No costs yet. Add the flight out of Hilo to get started.</div></td></tr>`;
   renderCostSummary();
 }
 function renderCostSummary() {
@@ -943,11 +994,27 @@ function expChange(e) {
   save("expenses/" + id, S.expenses[id], el.type === "checkbox" || el.tagName === "SELECT" ? 0 : 500);
   tr.querySelector("[data-total]").textContent = money(rowTotal(S.expenses[id]));
   if (f === "booked") tr.classList.toggle("done", v);
-  if (f === "cat") tr.querySelector(".stops-cell").innerHTML = stopsHtml(id, S.expenses[id]);
+  if (f === "cat") { tr.querySelector(".stops-cell").innerHTML = stopsHtml(id, S.expenses[id]); tr.querySelector(".sched-cell").innerHTML = schedHtml(id, S.expenses[id]); if (!TRANSPORT.includes(v)) { openSched.delete(id); tr.nextElementSibling?.classList.contains("detail") && tr.nextElementSibling.remove(); } }
+  if (f === "date" || f === "cat") { tr.querySelector("[data-dnote]").textContent = dateNote(S.expenses[id]); const dd = document.getElementById("x-date-" + id); if (dd && f === "date") dd.value = v; }
   renderCostSummary(); renderStats();
 }
 $("#expTbl").addEventListener("input", expChange);
+$("#expTbl").addEventListener("input", e => {
+  const f = e.target.dataset.df; if (!f) return;
+  const id = e.target.closest("tr.detail").dataset.detail;
+  S.expenses[id] = { ...S.expenses[id], [f]: e.target.value.slice(0, 40) };
+  if (f === "date" && !S.expenses[id].arrDate) { /* nothing extra */ }
+  save("expenses/" + id, S.expenses[id], 600);
+  const main = $(`#expTbl tr[data-id="${CSS.escape(id)}"]`);
+  if (main) {
+    if (f === "date") main.querySelector('[data-f="date"]').value = e.target.value;
+    main.querySelector(".sched-cell").innerHTML = schedHtml(id, S.expenses[id]);
+    main.querySelector("[data-dnote]").textContent = dateNote(S.expenses[id]);
+  }
+});
 $("#expTbl").addEventListener("click", e => {
+  const sch = e.target.closest("[data-sched]");
+  if (sch) { const id = e.target.closest("tr").dataset.id; openSched.has(id) ? openSched.delete(id) : openSched.add(id); renderCosts(); document.getElementById("x-dt-" + id)?.focus(); return; }
   const add = e.target.closest("[data-addstop]"), rm = e.target.closest("[data-rmstop]");
   if (add || rm) {
     const id = e.target.closest("tr").dataset.id, st = (S.expenses[id].stops || []).map(x => ({ ...x }));
@@ -971,8 +1038,21 @@ function renderDays() {
     const k = "d" + String(i + 1).padStart(2, "0"), d = S.days[k] || {}, dt = dayDate(i);
     const travel = i === 0 || i === st.len - 1;
     const iso = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, "0")}-${String(dt.getDate()).padStart(2, "0")}`;
-    const moves = Object.values(S.expenses).filter(x => x.date === iso && TRANSPORT.includes(x.cat)).sort((a, b) => (a.created || 0) - (b.created || 0));
-    const movesHtml = moves.length ? `<div class="onday">${moves.map(x => { const via = (x.stops || []).filter(y => (y.at || "").trim()); return `<div><b>${x.cat === "Flights" ? "Flight" : x.cat === "Trains" ? "Train" : "Transfer"}</b>${esc(x.what || "Untitled")}${via.length ? ` · via ${via.map(y => esc(y.at) + (parseDur(y.dur) ? " (" + fmtDur(parseDur(y.dur)) + ")" : "")).join(", ")}` : ""}</div>`; }).join("")}</div>` : "";
+    const items = [];
+    for (const x of Object.values(S.expenses)) {
+      if (!TRANSPORT.includes(x.cat)) continue;
+      if (x.date === iso) items.push({ x, t: x.depTime || "", arr: false });
+      if (x.arrDate && x.arrDate === iso && x.arrDate !== x.date) items.push({ x, t: x.arrTime || "", arr: true });
+    }
+    items.sort((a, b) => (a.t || "99").localeCompare(b.t || "99") || (a.x.created || 0) - (b.x.created || 0));
+    const kindOf = x => x.cat === "Flights" ? "Flight" : x.cat === "Trains" ? "Train" : "Transfer";
+    const movesHtml = items.length ? `<div class="onday">${items.map(({ x, arr }) => {
+      const via = (x.stops || []).filter(y => (y.at || "").trim());
+      const viaTxt = via.length ? ` · via ${via.map(y => esc(y.at) + (parseDur(y.dur) ? " (" + fmtDur(parseDur(y.dur)) + ")" : "")).join(", ")}` : "";
+      if (arr) return `<div><b>Arrive</b>${esc(x.what || kindOf(x))}${x.to || x.arrTime ? ` · ${esc([x.to, x.arrTime].filter(Boolean).join(" "))}` : ""}</div>`;
+      const line = schedLine(x);
+      return `<div><b>${kindOf(x)}</b>${x.num ? esc(x.num) + " · " : ""}${esc(x.what || "Untitled")}${line ? `<br><span class="when">${esc(line)}</span>` : ""}${viaTxt}${x.conf ? ` · conf <span class="when">${esc(x.conf)}</span>` : ""}</div>`;
+    }).join("")}</div>` : "";
     h += `<div class="day ${travel ? "travel" : ""}" data-k="${k}">
       <div class="day-top"><span class="dn">Day ${i + 1}</span><span class="dt">${fmtD(dt, { weekday: "short", month: "short", day: "numeric" }).toUpperCase()}</span></div>
       ${movesHtml}${daySpotsHtml(k)}
@@ -1185,8 +1265,21 @@ $("#packs").addEventListener("change", e => { const k = e.target.dataset.k; if (
 $("#packs").addEventListener("submit", e => { e.preventDefault(); const g = e.target.closest(".pack").dataset.g, inp = e.target.querySelector("input"), v = inp.value.trim(); if (!v) return; S.pack.extra = { ...S.pack.extra, [g]: [...(S.pack.extra[g] || []), v] }; savePack(); renderPacking(); });
 
 // ---------- TRIP DETAILS ----------
+function flightSpan() {
+  const ds = [];
+  for (const x of Object.values(S.expenses)) if (TRANSPORT.includes(x.cat)) { if (x.date) ds.push(x.date); if (x.arrDate) ds.push(x.arrDate); }
+  const ok = ds.filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d)).sort();
+  return ok.length ? [ok[0], ok[ok.length - 1]] : null;
+}
 function renderTrip() {
   const st = set();
+  const span = flightSpan(), box = $("#tripFlights");
+  if (span) {
+    const len = daysBetween(span[0], span[1]) + 1, [a, b] = tripRange(), same = span[0] === a && span[1] === b;
+    box.hidden = false;
+    box.innerHTML = same ? `<span>Trip dates match your flights and trains: <b>${shortD(span[0])} – ${shortD(span[1])}</b>.</span>`
+      : `<span>Your flights and trains run <b>${shortD(span[0])} – ${shortD(span[1])}, ${span[0].slice(0, 4)}</b> (${len} days).</span><button class="btn" type="button" id="useFlights" ${len < 3 || len > 30 ? "disabled" : ""}>Use these as our trip dates</button>`;
+  } else box.hidden = true;
   for (const [id, k] of [["fStart", "start"], ["fLen", "len"], ["fBudget", "budget"], ["fNames", "names"]]) { const el = document.getElementById(id); if (document.activeElement !== el) el.value = st[k]; }
 }
 document.querySelector("#v-trip").addEventListener("input", e => {
@@ -1196,6 +1289,12 @@ document.querySelector("#v-trip").addEventListener("input", e => {
   S.settings = { ...set(), [k]: v }; save("planner/settings", S.settings, 600); renderStats();
 });
 document.querySelector("#v-trip").addEventListener("focusout", () => renderAll());
+document.querySelector("#v-trip").addEventListener("click", e => {
+  if (e.target.id !== "useFlights") return;
+  const span = flightSpan(); if (!span) return;
+  S.settings = { ...set(), start: span[0], len: Math.max(3, Math.min(30, daysBetween(span[0], span[1]) + 1)) };
+  save("planner/settings", S.settings, 0); renderAll();
+});
 
 // ---------- SPOTS ----------
 let ME = "Me";
