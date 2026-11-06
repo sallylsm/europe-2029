@@ -1,6 +1,6 @@
 // Offline support: keeps the page, its icons, fonts and the Firebase code on the device.
 // Bump VERSION whenever you upload a new index.html so phones pick up the change.
-const VERSION = "europe2029-v5";
+const VERSION = "europe2029-v6";
 const SHELL = ["./", "index.html", "config.js", "manifest.webmanifest", "icon.svg", "icon-192.png", "icon-512.png"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener("activate", e => {
