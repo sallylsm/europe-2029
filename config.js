@@ -13,3 +13,5 @@ export const allowedEmails = [
   "sallylau01@gmail.com",
   "smolina.126@gmail.com"
 ];
+
+export const unsplashKey = "8Qwf6kPDtQNszPWkoG3Q385rwpOk62xTxlj5LD3K-6U"
