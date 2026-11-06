@@ -323,6 +323,21 @@ tr.detail td { background: var(--paper); border-bottom: 1px solid var(--line); }
 .spots-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px; gap: 18px; align-items: start; }
 .spots-main { display: grid; gap: 12px; min-width: 0; }
 .filters { display: grid; gap: 10px; padding: 14px 16px; }
+.quick { display: grid; gap: 8px; padding: 14px 16px; border-color: var(--accent-soft); }
+.quick-label { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--accent); font-weight: 800; }
+.suggest-wrap { position: relative; }
+.suggest-wrap input { width: 100%; border: 1px solid var(--line); border-radius: 9px; padding: 10px 12px; background: var(--surface); font-size: 15px; }
+.quick .suggest-wrap input { border-color: var(--accent); }
+.suggest { position: absolute; left: 0; right: 0; top: calc(100% + 4px); z-index: 8; list-style: none; margin: 0; padding: 4px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 12px 28px rgba(0,0,0,.16); max-height: 340px; overflow-y: auto; }
+.suggest[hidden] { display: none; }
+.suggest li { display: grid; grid-template-columns: 12px 1fr auto; gap: 10px; align-items: center; padding: 8px 10px; border-radius: 7px; cursor: pointer; }
+.suggest li[aria-selected="true"], .suggest li:hover { background: var(--paper); }
+.suggest li i { width: 10px; height: 10px; border-radius: 50%; background: var(--tc); }
+.suggest li b { font-weight: 700; display: block; line-height: 1.25; }
+.suggest li small { color: var(--muted); font-size: 12px; }
+.suggest li em { font-style: normal; font-size: 11.5px; font-weight: 700; color: var(--tc); white-space: nowrap; }
+.suggest .note { display: block; color: var(--muted); font-size: 13px; cursor: default; }
+.credit { position: absolute; right: 8px; bottom: 6px; font-size: 10.5px; color: #fff; background: rgba(0,0,0,.45); padding: 1px 6px; border-radius: 4px; }
 .frow { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
 .frow input[type="search"] { flex: 1; min-width: 180px; border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--surface); }
 .frow select { border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; background: var(--surface); }
@@ -404,7 +419,8 @@ svg.map .mpin text { font: 700 11px var(--f-body); fill: var(--ink); paint-order
   <form class="modal-card" id="spotForm" autocomplete="off">
     <div class="row between"><h2 id="spotFormTitle">Add a spot</h2><button class="del" type="button" id="spotClose" aria-label="Close">×</button></div>
     <input type="hidden" id="sfId">
-    <label class="field" for="sfName">Name<input id="sfName" required maxlength="80" placeholder="e.g. Liberty London, Café de Flore"></label>
+    <div class="field"><label for="sfName">Name</label><div class="suggest-wrap"><input id="sfName" required maxlength="80" autocomplete="off" placeholder="Start typing, e.g. Vatican Museums" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="sfList"><ul class="suggest" id="sfList" role="listbox" aria-label="Matching places" hidden></ul></div></div>
+    <input type="hidden" id="sfLat"><input type="hidden" id="sfLon">
     <div class="fields2">
       <label class="field" for="sfType">Type<select id="sfType"><option value="shop">Shop</option><option value="food">Food</option><option value="cafe">Café & bakery</option><option value="sight">Sight</option><option value="museum">Museum</option><option value="nature">Nature & views</option><option value="market">Market</option><option value="night">Nightlife</option><option value="experience">Experience</option><option value="other">Other</option></select></label>
       <label class="field" for="sfCity">City<input id="sfCity" list="cityList" maxlength="60" placeholder="e.g. Paris"></label>
@@ -496,6 +512,14 @@ svg.map .mpin text { font: 700 11px var(--f-body); fill: var(--ink); paint-order
     <div class="row between"><div><h2>Our spots</h2><p class="hint">Shops, cafés, views and anything else we don't want to miss, even if that city isn't on the route yet. Tap ♥ on the ones you love too.</p></div><button class="btn" id="addSpot" type="button">Add a spot</button></div>
     <div class="spots-layout">
       <div class="spots-main">
+        <div class="card quick">
+          <label class="quick-label" for="quickQ">Quick add</label>
+          <div class="suggest-wrap">
+            <input id="quickQ" type="search" autocomplete="off" placeholder="Type a place, e.g. the Vatican, Sagrada Família, Liberty London" role="combobox" aria-autocomplete="list" aria-expanded="false" aria-controls="quickList">
+            <ul class="suggest" id="quickList" role="listbox" aria-label="Matching places" hidden></ul>
+          </div>
+          <p class="hint" id="quickMsg">Pick a result and it's added with its type, city, map pin and a Google Maps link. You can edit anything afterwards.</p>
+        </div>
         <div class="card filters">
           <div class="frow"><input id="spotQ" type="search" placeholder="Search names, notes, cities…" aria-label="Search spots"><select id="spotSort" aria-label="Sort spots"><option value="new">Newest first</option><option value="love">Most loved</option><option value="az">A–Z</option><option value="city">By city</option></select></div>
           <div class="frow"><span class="flabel">Country</span><div class="chips" id="fCountry"></div></div>
@@ -1364,10 +1388,10 @@ function renderSpots(force) {
   $("#spotGrid").innerHTML = L.length ? L.map(sp => {
     const t = TYPE[sp.type], who = Object.values(sp.hearts), mine = !!sp.hearts[uid || "local"];
     const link = safeUrl(sp.link), hasPt = isFinite(sp.lat) && isFinite(sp.lon) && sp.lat !== null;
-    const maps = hasPt ? `https://www.google.com/maps/search/?api=1&query=${sp.lat},${sp.lon}` : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([sp.name, sp.city, sp.country].filter(Boolean).join(" "))}`;
+    const maps = gmapsUrl(sp), isG = isGmaps(link);
     const photo = typeof sp.photo === "string" && sp.photo.startsWith("data:image/") ? sp.photo : "";
     return `<article class="spot ${sp.done ? "done" : ""}" id="sp-${esc(sp.id)}" data-id="${esc(sp.id)}" style="--tc:${t.col}">
-      <div class="spot-img">${photo ? `<img src="${photo}" alt="${esc(sp.name)}" data-zoom>` : `<div class="ph"><span>${esc((sp.name || "?").trim().charAt(0).toUpperCase())}</span></div>`}<span class="type-chip">${esc(t.label)}</span>${sp.done ? `<span class="visited">Visited</span>` : ""}</div>
+      <div class="spot-img">${photo ? `<img src="${photo}" alt="${esc(sp.name)}" data-zoom>` : `<div class="ph"><span>${esc((sp.name || "?").trim().charAt(0).toUpperCase())}</span></div>`}<span class="type-chip">${esc(t.label)}</span>${sp.done ? `<span class="visited">Visited</span>` : ""}${photo && sp.photoCredit ? `<span class="credit">${esc(sp.photoCredit)}</span>` : ""}</div>
       <div class="spot-body">
         <h3 class="spot-name">${esc(sp.name)}</h3>
         <div class="spot-where">${esc([sp.city, sp.country].filter(Boolean).join(", ") || "Somewhere in Europe")}${sp.city && rn.has(sp.city.toLowerCase()) ? `<span class="tag">on our route</span>` : ""}</div>
@@ -1375,8 +1399,8 @@ function renderSpots(force) {
         <div class="spot-foot">
           <button type="button" class="heart ${mine ? "on" : ""}" data-heart aria-pressed="${mine}" aria-label="Love this spot">♥ ${who.length || ""}</button>
           <span class="heart-who">${who.length ? esc(who.join(" & ")) : ""}</span><span class="grow"></span>
-          ${link ? `<a class="iconlink" href="${esc(link)}" target="_blank" rel="noopener">Link ↗</a>` : ""}
-          <a class="iconlink" href="${esc(maps)}" target="_blank" rel="noopener">Maps ↗</a>
+          ${link && !isG ? `<a class="iconlink" href="${esc(link)}" target="_blank" rel="noopener">Link ↗</a>` : ""}
+          <a class="iconlink" href="${esc(isG ? link : maps)}" target="_blank" rel="noopener">Maps ↗</a>
           <button type="button" class="iconlink" data-edit>Edit</button>
         </div>
         <div class="spot-plan"><select data-day aria-label="Plan ${esc(sp.name)} for a day">${dayOptions(sp.day)}</select><label><input type="checkbox" data-done ${sp.done ? "checked" : ""}> Visited</label></div>
@@ -1431,6 +1455,132 @@ function renderMini(refit) {
   const usedTypes = [...new Set(filteredSpots().map(sp => sp.type))];
   $("#miniLegend").innerHTML = usedTypes.map(t => `<span class="sw"><b style="background:${TYPE[t].col};height:10px;width:10px;border-radius:50%"></b>${esc(TYPE[t].label)}</span>`).join("");
 }
+// ---- place search (Photon, OpenStreetMap data) ----
+const isGmaps = u => /^https?:\/\/(www\.)?(google\.[a-z.]+\/maps|maps\.google\.[a-z.]+|maps\.app\.goo\.gl|goo\.gl\/maps)/i.test(String(u || ""));
+const gmapsUrl = x => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([x.name, x.city, x.country].filter(Boolean).join(", "))}`;
+function typeFrom(k, v) {
+  v = v || "";
+  if (k === "shop") return ["bakery", "pastry", "confectionery", "coffee", "tea", "chocolate"].includes(v) ? "cafe" : ["marketplace"].includes(v) ? "market" : "shop";
+  if (k === "amenity") {
+    if (["restaurant", "fast_food", "food_court", "bbq", "biergarten"].includes(v)) return "food";
+    if (["cafe", "ice_cream"].includes(v)) return "cafe";
+    if (["bar", "pub", "nightclub", "casino"].includes(v)) return "night";
+    if (v === "marketplace") return "market";
+    if (["theatre", "cinema", "arts_centre", "concert_hall", "planetarium"].includes(v)) return "experience";
+    if (["place_of_worship", "monastery", "townhall", "fountain", "clock"].includes(v)) return "sight";
+    return "other";
+  }
+  if (k === "tourism") {
+    if (["museum", "gallery"].includes(v)) return "museum";
+    if (["viewpoint", "picnic_site", "camp_site"].includes(v)) return "nature";
+    if (["zoo", "theme_park", "aquarium", "attraction"].includes(v)) return v === "attraction" ? "sight" : "experience";
+    return v === "artwork" ? "sight" : "other";
+  }
+  if (["historic", "building", "man_made", "bridge"].includes(k)) return "sight";
+  if (k === "leisure") return ["park", "garden", "nature_reserve", "beach_resort", "marina"].includes(v) ? "nature" : ["water_park", "stadium", "sports_centre", "amusement_arcade"].includes(v) ? "experience" : "nature";
+  if (["natural", "waterway", "mountain_pass"].includes(k)) return "nature";
+  if (k === "craft") return "shop";
+  if (k === "place" || k === "boundary") return "sight";
+  return "other";
+}
+const kindLabel = (k, v) => { const t = String(v || k || "").replace(/_/g, " "); return t === "yes" ? String(k).replace(/_/g, " ") : t; };
+const searchCache = new Map();
+async function searchPlaces(q) {
+  const key = q.toLowerCase();
+  if (searchCache.has(key)) return searchCache.get(key);
+  const r = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=10&lang=en&bbox=-25,34,45,72`);
+  if (!r.ok) throw new Error("search failed");
+  const j = await r.json(), seen = new Set(), out = [];
+  for (const f of j.features || []) {
+    const p = f.properties || {}, c = (f.geometry || {}).coordinates || [];
+    if (!p.name || c.length < 2) continue;
+    const isPlace = p.osm_key === "place" && ["city", "town", "village", "hamlet", "island"].includes(p.osm_value);
+    const city = isPlace ? p.name : (p.city || p.town || p.village || p.district || p.county || p.state || "");
+    const x = { name: p.name, type: typeFrom(p.osm_key, p.osm_value), kind: kindLabel(p.osm_key, p.osm_value), city, country: p.country || "", lat: c[1], lon: c[0], isPlace };
+    const sig = (x.name + "|" + x.city).toLowerCase(); if (seen.has(sig)) continue; seen.add(sig);
+    out.push(x);
+  }
+  searchCache.set(key, out); return out;
+}
+async function wikiPhoto(name, city) {
+  // try "Name" then "Name (City)"; skip disambiguation pages
+  for (const t of [name, `${name} (${city})`]) {
+    try {
+      const r = await fetch(`https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(t.replace(/ /g, "_"))}`);
+      if (!r.ok) continue;
+      const j = await r.json();
+      if (j.type === "disambiguation" || !j.thumbnail) continue;
+      const src = (j.thumbnail.source || "").replace(/\/(\d+)px-/, "/800px-");
+      let blob = await fetch(src).then(x => x.ok ? x.blob() : null).catch(() => null);
+      if (!blob) blob = await fetch(j.thumbnail.source).then(x => x.ok ? x.blob() : null).catch(() => null);
+      if (!blob) continue;
+      return await shrink(blob, 900, 260000);
+    } catch { /* try the next title */ }
+  }
+  return "";
+}
+function closeSuggest(list, input) { list.hidden = true; list.innerHTML = ""; input.setAttribute("aria-expanded", "false"); input.removeAttribute("aria-activedescendant"); }
+function attachSuggest(input, list, onPick) {
+  let timer = 0, results = [], active = -1, seq = 0;
+  const show = html => { list.innerHTML = html; list.hidden = false; input.setAttribute("aria-expanded", "true"); };
+  const paint = () => {
+    show(results.map((x, i) => `<li role="option" id="${list.id}-${i}" data-i="${i}" aria-selected="${i === active}" style="--tc:${TYPE[x.type].col}"><i></i><span><b>${esc(x.name)}</b><small>${esc([x.city !== x.name ? x.city : "", x.country].filter(Boolean).join(", "))}</small></span><em>${esc(x.isPlace ? "Town / city" : TYPE[x.type].label)}</em></li>`).join(""));
+    if (active >= 0) input.setAttribute("aria-activedescendant", `${list.id}-${active}`);
+  };
+  input.addEventListener("input", () => {
+    clearTimeout(timer); const q = input.value.trim();
+    if (q.length < 3) { closeSuggest(list, input); return; }
+    timer = setTimeout(async () => {
+      const my = ++seq;
+      if (!navigator.onLine) { show(`<li class="note">Place search needs an internet connection. You can still type the details yourself.</li>`); return; }
+      try {
+        const res = await searchPlaces(q.replace(/^the\s+/i, "")); if (my !== seq) return;
+        results = res; active = res.length ? 0 : -1;
+        if (!res.length) show(`<li class="note">No matches for “${esc(q)}”. Try another spelling, or add the city name.</li>`); else paint();
+      } catch { if (my === seq) show(`<li class="note">Search isn't responding right now. Try again in a moment.</li>`); }
+    }, 280);
+  });
+  input.addEventListener("keydown", e => {
+    if (list.hidden || !results.length) return;
+    if (e.key === "ArrowDown") { e.preventDefault(); active = (active + 1) % results.length; paint(); }
+    else if (e.key === "ArrowUp") { e.preventDefault(); active = (active - 1 + results.length) % results.length; paint(); }
+    else if (e.key === "Enter" && active >= 0) { e.preventDefault(); const x = results[active]; closeSuggest(list, input); onPick(x); }
+    else if (e.key === "Escape") { e.stopPropagation(); closeSuggest(list, input); }
+  });
+  list.addEventListener("mousedown", e => e.preventDefault());
+  list.addEventListener("click", e => { const li = e.target.closest("li[data-i]"); if (!li) return; const x = results[+li.dataset.i]; closeSuggest(list, input); onPick(x); });
+  input.addEventListener("blur", () => setTimeout(() => closeSuggest(list, input), 150));
+}
+let sfPicked = null;
+attachSuggest($("#sfName"), $("#sfList"), async x => {
+  sfPicked = x;
+  $("#sfName").value = x.name; $("#sfType").value = x.type; $("#sfCity").value = x.city;
+  $("#sfLat").value = x.lat; $("#sfLon").value = x.lon;
+  if (!$("#sfLink").value) $("#sfLink").value = gmapsUrl(x);
+  $("#sfPinNote").textContent = `Pinned at ${x.name}${x.city && x.city !== x.name ? ", " + x.city : ""}.`;
+  if (!sfPhoto) {
+    $("#sfMsg").textContent = "Looking for a photo…";
+    const ph = await wikiPhoto(x.name, x.city);
+    if (ph && !sfPhoto && sfPicked === x) { sfPhoto = ph; sfCredit = "Photo: Wikipedia"; $("#sfImg").src = ph; $("#sfImg").hidden = false; $("#sfNoImg").hidden = false; $("#sfMsg").textContent = "Added a photo from Wikipedia. Remove it if it's not the right place."; }
+    else if (sfPicked === x) $("#sfMsg").textContent = "";
+  }
+  $("#sfNotes").focus();
+});
+$("#sfName").addEventListener("input", () => { if (sfPicked && $("#sfName").value !== sfPicked.name) { sfPicked = null; $("#sfLat").value = ""; $("#sfLon").value = ""; } });
+attachSuggest($("#quickQ"), $("#quickList"), async x => {
+  const dup = spotList().find(sp => sp.name.toLowerCase() === x.name.toLowerCase() && (sp.city || "") === x.city);
+  if (dup) { $("#quickMsg").innerHTML = `${esc(x.name)} is already in your spots. <button class="linkbtn" type="button" data-open="${esc(dup.id)}">Open it</button>`; $("#quickQ").value = ""; return; }
+  const id = live ? doc(collection(fs, "spots")).id : "x" + Date.now();
+  S.spots[id] = { name: x.name.slice(0, 80), type: x.type, city: x.city.slice(0, 60), country: x.country.slice(0, 60), link: gmapsUrl(x), notes: "", day: "", photo: "", photoCredit: "",
+    lat: x.lat, lon: x.lon, exact: true, done: false, hearts: { [uid || "local"]: ME }, by: ME, created: Date.now() };
+  saveSpot(id); $("#quickQ").value = ""; renderSpots(true);
+  $("#quickMsg").innerHTML = `Added <b>${esc(x.name)}</b> · ${esc(TYPE[x.type].label)}${x.city ? " in " + esc(x.city) : ""}. <button class="linkbtn" type="button" data-open="${esc(id)}">Add notes or change it</button>`;
+  const card = document.getElementById("sp-" + id); if (card) { card.classList.add("flash"); setTimeout(() => card.classList.remove("flash"), 1400); }
+  const ph = await wikiPhoto(x.name, x.city);
+  if (ph && S.spots[id] && !S.spots[id].photo) { S.spots[id] = { ...S.spots[id], photo: ph, photoCredit: "Photo: Wikipedia" }; saveSpot(id); renderSpots(true); }
+});
+$("#quickMsg").addEventListener("click", e => { const b = e.target.closest("[data-open]"); if (b) openSpot(b.dataset.open); });
+
 // highlight a card's pin on hover
 $("#spotGrid").addEventListener("pointerover", e => { const c = e.target.closest(".spot"); document.querySelectorAll("#miniPins .mpin.hl").forEach(g => g.classList.remove("hl")); if (c) document.querySelectorAll(`#miniPins .mpin[data-id="${CSS.escape(c.dataset.id)}"]`).forEach(g => g.classList.add("hl")); });
 // filters
@@ -1464,16 +1614,18 @@ $("#spotGrid").addEventListener("change", e => {
   if (e.target.matches("[data-done]")) { S.spots[id] = { ...S.spots[id], done: e.target.checked }; saveSpot(id); renderSpots(true); }
 });
 // add / edit modal
-let sfPhoto = "", delArmed = false;
+let sfPhoto = "", sfCredit = "", delArmed = false;
 function openSpot(id) {
   const sp = id ? S.spots[id] : null;
   $("#spotFormTitle").textContent = sp ? "Edit spot" : "Add a spot";
   $("#sfId").value = id || ""; $("#sfName").value = sp?.name || ""; $("#sfType").value = sp?.type || "shop";
   $("#sfCity").value = sp?.city || F.city || ""; $("#sfLink").value = sp?.link || ""; $("#sfNotes").value = sp?.notes || "";
   $("#sfDay").innerHTML = dayOptions(sp?.day || "");
+  sfCredit = sp?.photoCredit || ""; $("#sfLat").value = ""; $("#sfLon").value = ""; closeSuggest($("#sfList"), $("#sfName"));
   sfPhoto = sp?.photo || ""; $("#sfImg").hidden = !sfPhoto; $("#sfImg").src = sfPhoto || ""; $("#sfNoImg").hidden = !sfPhoto;
   $("#sfDelete").hidden = !sp; $("#sfDelete").textContent = "Delete"; delArmed = false; $("#sfMsg").textContent = "";
   $("#cityList").innerHTML = [...new Set([...CITIES.map(c => c.name), ...spotList().map(x => x.city).filter(Boolean)])].sort().map(n => `<option value="${esc(n)}">`).join("");
+  sfPicked = null;
   $("#spotModal").hidden = false; $("#sfName").focus();
 }
 const closeSpot = () => { $("#spotModal").hidden = true; };
@@ -1484,9 +1636,9 @@ document.addEventListener("keydown", e => { if (e.key === "Escape" && !$("#spotM
 $("#sfLink").addEventListener("input", () => { const c = coordsFromLink($("#sfLink").value); $("#sfPinNote").textContent = c ? "Exact location found in that link. The spot will be pinned right there." : "Paste a full Google Maps link and the spot gets its exact pin. Otherwise it's pinned at the city."; });
 $("#sfFile").addEventListener("change", async e => {
   const f = e.target.files[0]; e.target.value = ""; if (!f) return;
-  try { sfPhoto = await shrink(f, 900, 260000); $("#sfImg").src = sfPhoto; $("#sfImg").hidden = false; $("#sfNoImg").hidden = false; } catch (err) { $("#sfMsg").textContent = err.message; }
+  try { sfPhoto = await shrink(f, 900, 260000); sfCredit = ""; $("#sfImg").src = sfPhoto; $("#sfImg").hidden = false; $("#sfNoImg").hidden = false; } catch (err) { $("#sfMsg").textContent = err.message; }
 });
-$("#sfNoImg").addEventListener("click", () => { sfPhoto = ""; $("#sfImg").hidden = true; $("#sfNoImg").hidden = true; });
+$("#sfNoImg").addEventListener("click", () => { sfPhoto = ""; sfCredit = ""; $("#sfImg").hidden = true; $("#sfNoImg").hidden = true; });
 $("#sfDelete").addEventListener("click", () => {
   if (!delArmed) { delArmed = true; $("#sfDelete").textContent = "Tap again to delete"; return; }
   const id = $("#sfId").value; const rest = { ...S.spots }; delete rest[id]; S.spots = rest; remove("spots/" + id); closeSpot(); renderAll(); renderSpots(true);
@@ -1494,14 +1646,16 @@ $("#sfDelete").addEventListener("click", () => {
 $("#spotForm").addEventListener("submit", async e => {
   e.preventDefault();
   const name = $("#sfName").value.trim(); if (!name) return;
-  const id0 = $("#sfId").value, prev = id0 ? S.spots[id0] : null;
+  const id0 = $("#sfId").value, prev = id0 ? S.spots[id0] : null, picked = sfPicked;
   const city = $("#sfCity").value.trim(), link = $("#sfLink").value.trim();
   let lat = null, lon = null, country = prev && prev.city === city ? prev.country || "" : "", exact = false;
   const c = coordsFromLink(link);
   if (c) { [lat, lon] = c; exact = true; }
-  else if (prev && prev.city === city && prev.lat != null && !prev.exact) { lat = prev.lat; lon = prev.lon; }
+  else if ($("#sfLat").value) { lat = +$("#sfLat").value; lon = +$("#sfLon").value; exact = true; }
+  else if (prev && prev.city === city && prev.lat != null) { lat = prev.lat; lon = prev.lon; exact = !!prev.exact; }
   const kc = knownCity(city);
   if (kc) { country = kc.country; if (!exact) { lat = kc.lat; lon = kc.lon; } }
+  if (picked && picked.city === city && picked.country) country = picked.country;
   if (city && !kc && (lat == null || !country)) {
     $("#sfSave").disabled = true; $("#sfMsg").textContent = "Finding " + city + "…";
     try {
@@ -1513,7 +1667,7 @@ $("#spotForm").addEventListener("submit", async e => {
   }
   const id = id0 || (live ? doc(collection(fs, "spots")).id : "x" + Date.now());
   S.spots[id] = { name: name.slice(0, 80), type: $("#sfType").value, city: city.slice(0, 60), country: String(country).slice(0, 60), link: link.slice(0, 500),
-    notes: $("#sfNotes").value.trim().slice(0, 400), day: $("#sfDay").value, photo: sfPhoto, lat, lon, exact,
+    notes: $("#sfNotes").value.trim().slice(0, 400), day: $("#sfDay").value, photo: sfPhoto, photoCredit: sfPhoto ? sfCredit : "", lat, lon, exact,
     done: prev?.done || false, hearts: prev?.hearts || { [uid || "local"]: ME }, by: prev?.by || ME, created: prev?.created || Date.now() };
   saveSpot(id); closeSpot(); renderSpots(true); renderDays();
   if (lat == null && city) { $("#banner").textContent = `${name} was saved, but we couldn't find "${city}" on the map. Edit it later to add a pin.`; $("#banner").hidden = false; }
