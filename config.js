@@ -1,6 +1,6 @@
 // 1) Paste the firebaseConfig from Firebase console → Project settings → Your apps → Web app.
 export const firebaseConfig = {
-  apiKey: "IzaSyD-iKb9BMM2IO5rK6afVMl18S8uX-fw2RA",
+  apiKey: "AIzaSyD-iKb9BMM2IO5rK6afVMl18S8uX-fw2RA",
   authDomain: "europe-2029.firebaseapp.com",
   projectId: "europe-2029",
   storageBucket: "europe-2029.appspot.com",
