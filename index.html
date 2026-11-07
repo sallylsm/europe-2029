@@ -347,6 +347,7 @@ tr.detail td { background: var(--paper); border-bottom: 1px solid var(--line); }
 .chip .n { font: 500 10.5px var(--f-mono); opacity: .7; margin-left: 4px; }
 .toggles { font-size: 13px; color: var(--muted); gap: 16px; }
 .toggles label { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+.fill-status { margin: 0; }
 .linkbtn { border: 0; background: transparent; color: var(--accent); font-weight: 700; cursor: pointer; padding: 2px 0; }
 .spot-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 14px; }
 .spot { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; display: grid; grid-template-rows: auto 1fr; transition: box-shadow .15s, transform .15s; }
@@ -525,7 +526,8 @@ svg.map .mpin text { font: 700 11px var(--f-body); fill: var(--ink); paint-order
 
   <!-- SPOTS -->
   <section class="view" id="v-spots">
-    <div class="row between"><div><h2>Our spots</h2><p class="hint">Shops, cafés, views and anything else we don't want to miss, even if that city isn't on the route yet. Tap ♥ on the ones you love too.</p></div><button class="btn" id="addSpot" type="button">Add a spot</button></div>
+    <div class="row between"><div><h2>Our spots</h2><p class="hint">Shops, cafés, views and anything else we don't want to miss, even if that city isn't on the route yet. Tap ♥ on the ones you love too.</p></div><div class="row"><button class="btn ghost" id="fillPhotos" type="button" hidden>Find photos</button><button class="btn" id="addSpot" type="button">Add a spot</button></div></div>
+    <p class="banner fill-status" id="fillStatus" hidden></p>
     <div class="spots-layout">
       <div class="spots-main">
         <div class="card quick">
@@ -1402,6 +1404,7 @@ function renderSpots(force) {
   const L = filteredSpots(), rn = routeNames();
   const anyF = F.q || F.country || F.city || F.type || F.route || F.loved || F.hideDone;
   $("#fClear").hidden = !anyF;
+  if (!fillRunning) { const n = all.filter(sp => !photoSrcOf(sp)).length; $("#fillPhotos").hidden = !n; $("#fillPhotos").textContent = `Find photos for ${n} spot${n === 1 ? "" : "s"}`; }
   $("#spotCount").textContent = all.length ? (anyF ? `Showing ${L.length} of ${all.length} spots` : `${all.length} spot${all.length === 1 ? "" : "s"} saved`) : "";
   $("#spotGrid").innerHTML = L.length ? L.map(sp => {
     const t = TYPE[sp.type], who = Object.values(sp.hearts), mine = !!sp.hearts[uid || "local"];
@@ -1571,22 +1574,34 @@ async function commonsNear(x) {
   const r = await fetch(`${COMMONS}&generator=geosearch&ggsnamespace=6&ggslimit=8&ggsradius=150&ggscoord=${x.lat}|${x.lon}`);
   return r.ok ? commonsFrom(await r.json()) : [];
 }
+let unsplashLimited = 0;
+const unsplashBusy = () => Date.now() - unsplashLimited < 15 * 60 * 1000;
 async function unsplashCands(x) {
-  if (!UNSPLASH_KEY) return [];
+  if (!UNSPLASH_KEY || unsplashBusy()) return [];
   const go = async q => {
     const r = await fetch(`https://api.unsplash.com/search/photos?per_page=4&orientation=landscape&content_filter=high&query=${encodeURIComponent(q)}`, { headers: { Authorization: "Client-ID " + UNSPLASH_KEY, "Accept-Version": "v1" } });
+    if (r.status === 403 || r.status === 429) { unsplashLimited = Date.now(); return []; }
     if (!r.ok) return [];
     return ((await r.json()).results || []).map(u => ({ kind: "hotlink", url: u.urls?.regular || "", credit: `Photo: ${u.user?.name || ""} on Unsplash`, by: u.user?.name || "", link: u.user?.links?.html ? `${u.user.links.html}?${UTM}` : "", dl: u.links?.download_location || "", photoSrc: "unsplash" })).filter(c => c.url);
   };
   const a = await go([x.name, x.city].filter(Boolean).join(" "));
-  return a.length ? a : (x.city ? go(x.city) : []);
+  return a.length || unsplashBusy() ? a : (x.city ? go(x.city) : []);
 }
-async function photoCandidates(x) {
+// Wikipedia and Commons are free and unlimited; Unsplash (50 searches an hour) is only asked when they come up short
+function addCands(list, more) { const seen = new Set(list.map(c => c.src || c.url)); for (const c of more) { const k = c.src || c.url; if (k && !seen.has(k)) { seen.add(k); list.push(c); } } return list; }
+async function photoCandidates(x, mode = "auto") {   // mode: "free" = never Unsplash, "auto" = Unsplash only if nothing free, "all"
   const safe = p => p.catch(() => []);
-  const [w, cs, cn, u] = await Promise.all([safe(wikiCands(x)), safe(commonsSearch(x)), safe(commonsNear(x)), safe(unsplashCands(x))]);
-  const seen = new Set(), out = [];
-  for (const c of [...w, ...cs, ...cn, ...u]) { const k = c.src || c.url; if (!k || seen.has(k)) continue; seen.add(k); out.push(c); }
+  const [w, cs, cn] = await Promise.all([safe(wikiCands(x)), safe(commonsSearch(x)), safe(commonsNear(x))]);
+  const out = addCands([], [...w, ...cs, ...cn]);
+  out.place = x; out.unsplashDone = false;
+  if (mode !== "free" && (mode === "all" || !out.length)) { addCands(out, await safe(unsplashCands(x))); out.unsplashDone = true; }
   return out;
+}
+async function moreFromUnsplash(list) {
+  if (!list || list.unsplashDone || !UNSPLASH_KEY) return false;
+  list.unsplashDone = true;
+  const before = list.length; addCands(list, await unsplashCands(list.place).catch(() => []));
+  return list.length > before;
 }
 async function materialize(c) {
   if (c.kind === "hotlink") return { photo: "", photoUrl: c.url, photoCredit: c.credit, photoLink: c.link, photoBy: c.by || "", photoSrc: c.photoSrc, dl: c.dl };
@@ -1595,6 +1610,62 @@ async function materialize(c) {
   if (!blob) throw new Error("couldn't load");
   return { photo: await shrink(blob, 900, 260000), photoUrl: "", photoCredit: c.credit, photoLink: c.link, photoBy: "", photoSrc: c.photoSrc, dl: "" };
 }
+// ---- fill in photos for spots that don't have one ----
+let fillRunning = false, fillStop = false;
+async function fillMissingPhotos() {
+  const btn = $("#fillPhotos"), st = $("#fillStatus");
+  if (fillRunning) { fillStop = true; btn.textContent = "Stopping…"; return; }
+  if (!navigator.onLine) { st.textContent = "Finding photos needs an internet connection."; st.hidden = false; return; }
+  const todo = spotList().filter(sp => !photoSrcOf(sp)).map(sp => sp.id);
+  if (!todo.length) return;
+  fillRunning = true; fillStop = false; btn.textContent = "Stop"; st.hidden = false;
+  let found = 0, done = 0; const left = [];
+  const placeOf = id => { const sp = S.spots[id]; return sp && { name: sp.name, city: sp.city || "", lat: sp.lat ?? null, lon: sp.lon ?? null }; };
+  const apply = async (id, cands) => {
+    for (const c of cands) {
+      try {
+        const ph = await materialize(c);
+        if (!S.spots[id] || photoSrcOf(S.spots[id])) return true;   // deleted, or someone added a photo meanwhile
+        const { dl, ...keep } = ph;
+        S.spots[id] = { ...S.spots[id], ...keep }; saveSpot(id); trackUnsplash(dl); renderSpots(true);
+        return true;
+      } catch { /* next */ }
+    }
+    return false;
+  };
+  // pass 1: free sources only (Wikipedia + Commons), for every spot
+  for (const id of todo) {
+    if (fillStop) break;
+    const x = placeOf(id); if (!x || photoSrcOf(S.spots[id])) { done++; continue; }
+    st.textContent = `Finding free photos… ${done + 1} of ${todo.length} (${x.name})`;
+    const cands = await photoCandidates(x, "free").catch(() => []);
+    const ok = cands.length ? await apply(id, cands) : false;
+    if (ok) found++; else left.push(id);
+    done++;
+    await new Promise(r => setTimeout(r, 250));   // be polite to the free services
+  }
+  // pass 2: Unsplash only for what's left, until its hourly limit
+  let unsplashLeft = 0;
+  if (!fillStop && left.length && UNSPLASH_KEY) {
+    for (let i = 0; i < left.length; i++) {
+      if (fillStop) break;
+      if (unsplashBusy()) { unsplashLeft = left.length - i; break; }
+      const id = left[i], x = placeOf(id); if (!x || photoSrcOf(S.spots[id])) continue;
+      st.textContent = `Checking Unsplash… ${i + 1} of ${left.length} (${x.name})`;
+      const u = await unsplashCands(x).catch(() => []);
+      if (unsplashBusy()) { unsplashLeft = left.length - i; break; }
+      if (u.length && await apply(id, u)) { found++; left[i] = null; }
+    }
+  }
+  const still = spotList().filter(sp => !photoSrcOf(sp)).length;
+  fillRunning = false; fillStop = false;
+  st.textContent = `Added photos to ${found} spot${found === 1 ? "" : "s"}.` +
+    (unsplashLeft ? ` Unsplash's hourly limit was reached with ${unsplashLeft} left to check. Run this again in an hour to finish.` :
+     still ? ` ${still} still ${still === 1 ? "has" : "have"} no photo${UNSPLASH_KEY ? "" : " (adding an Unsplash key would find more)"}. You can upload or paste one in its edit form.` : " Every spot has a photo now.");
+  renderSpots(true);
+}
+$("#fillPhotos").addEventListener("click", fillMissingPhotos);
+
 function trackUnsplash(dl) {
   if (!dl || !UNSPLASH_KEY) return;
   fetch(dl + (dl.includes("?") ? "&" : "?") + "client_id=" + encodeURIComponent(UNSPLASH_KEY)).catch(() => {});
@@ -1721,7 +1792,7 @@ function showFormPhoto() {
   $("#sfImg").hidden = !src; if (src) $("#sfImg").src = src; $("#sfPrevPh").hidden = !!src;
   $("#sfNoImg").hidden = !src;
   $("#sfCreditTxt").innerHTML = sfPh && src ? creditHtml(sfPh).replace('class="credit"', "") : "";
-  $("#sfMore").textContent = sfCands && sfCands.length > 1 ? "Try another photo" : "Find a photo";
+  $("#sfMore").textContent = sfCands && (sfCands.length > 1 || (!sfCands.unsplashDone && UNSPLASH_KEY)) ? "Try another photo" : "Find a photo";
 }
 function setFormPhoto(ph) { sfPh = ph; sfPhoto = ph ? ph.photo || "" : ""; sfCredit = ph ? ph.photoCredit || "" : ""; showFormPhoto(); }
 async function nextFormPhoto(x, fresh) {
@@ -1732,13 +1803,19 @@ async function nextFormPhoto(x, fresh) {
     $("#sfMore").disabled = false;
     if (my !== sfSeq) return;
   }
-  if (!sfCands.length) { $("#sfMsg").textContent = navigator.onLine ? "No free photos found for this one. Upload or paste your own." : "Finding photos needs an internet connection."; showFormPhoto(); return; }
+  if (!sfCands.length) { $("#sfMsg").textContent = !navigator.onLine ? "Finding photos needs an internet connection." : unsplashBusy() && UNSPLASH_KEY ? "No free photos found, and Unsplash's hourly limit is reached. Try again later, or upload or paste your own." : "No free photos found for this one. Upload or paste your own."; showFormPhoto(); return; }
+  if (sfIdx >= sfCands.length - 1 && !sfCands.unsplashDone && UNSPLASH_KEY) {
+    $("#sfMore").disabled = true; $("#sfMsg").textContent = "Looking on Unsplash…";
+    await moreFromUnsplash(sfCands); $("#sfMore").disabled = false;
+    if (my !== sfSeq) return;
+  }
   for (let tries = 0; tries < sfCands.length; tries++) {
     sfIdx = (sfIdx + 1) % sfCands.length;
     try {
       const ph = await materialize(sfCands[sfIdx]); if (my !== sfSeq) return;
       setFormPhoto(ph);
-      $("#sfMsg").textContent = sfCands.length > 1 ? `Photo ${sfIdx + 1} of ${sfCands.length}. Not right? Try another, or use your own.` : "Not the right place? Remove it, or use your own.";
+      const more = !sfCands.unsplashDone && UNSPLASH_KEY;
+      $("#sfMsg").textContent = (sfCands.length > 1 || more ? `Photo ${sfIdx + 1} of ${sfCands.length}${more ? "+" : ""}. Not right? Try another, or use your own.` : "Not the right place? Remove it, or use your own.") + (unsplashBusy() && UNSPLASH_KEY ? " (Unsplash's hourly limit is reached, so its photos will be back within the hour.)" : "");
       return;
     } catch { /* skip broken ones */ }
   }
