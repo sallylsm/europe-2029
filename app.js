@@ -8,7 +8,8 @@ const app = initializeApp(CFG.firebaseConfig);
 const auth = getAuth(app);
 const fs = initializeFirestore(app, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) });
 const UNSPLASH_KEY = String(CFG.unsplashKey || "").trim();
-const FLIGHT_KEY = String(CFG.flightStatusKey || "").trim();   // optional AeroDataBox key (RapidAPI) for live flight status
+const FLIGHT_KEY = String(CFG.flightStatusKey || "").trim();
+const GKEY = String(CFG.googleMapsKey || "").trim();   // optional Google Maps Platform key: Google map, search and nearby places   // optional AeroDataBox key (RapidAPI) for live flight status
 
 // ---------------------------------------------------------------- helpers
 const $ = (s, el = document) => el.querySelector(s);
@@ -143,6 +144,7 @@ function applyTheme() {
   loadFont(theme.font);
   r.style.setProperty("--f-display", f.d ? `${f.d}, ${sys}` : sys); r.style.setProperty("--f-body", f.b ? `${f.b}, ${sys}` : sys);
   $$("#fontPick button").forEach(b => b.setAttribute("aria-pressed", b.dataset.font === theme.font));
+  $$("[data-labels]").forEach(b => b.setAttribute("aria-pressed", b.dataset.labels === (theme.labels || "en")));
   $$("#swatches button").forEach(b => b.setAttribute("aria-pressed", b.dataset.accent === theme.accent));
   $$("#modeSeg button").forEach(b => b.setAttribute("aria-pressed", b.dataset.mode === theme.mode));
   setTiles(); if (cur) renderMap();
@@ -150,9 +152,9 @@ function applyTheme() {
 $("#swatches").innerHTML = Object.entries(ACCENTS).map(([k, [l, d]]) => `<button type="button" data-accent="${k}" aria-label="${k}" title="${k[0].toUpperCase() + k.slice(1)}" style="background:linear-gradient(135deg,${l} 50%,${d} 50%)"></button>`).join("");
 $("#mePop").addEventListener("click", e => {
   e.stopPropagation();
-  const a = e.target.closest("[data-accent]"), m = e.target.closest("[data-mode]"), fo = e.target.closest("[data-font]");
-  if (a) theme.accent = a.dataset.accent; if (m) theme.mode = m.dataset.mode; if (fo) theme.font = fo.dataset.font;
-  if (a || m || fo) { try { localStorage.setItem("e29-theme", JSON.stringify(theme)); } catch {} applyTheme(); }
+  const a = e.target.closest("[data-accent]"), m = e.target.closest("[data-mode]"), fo = e.target.closest("[data-font]"), lb = e.target.closest("[data-labels]");
+  if (a) theme.accent = a.dataset.accent; if (m) theme.mode = m.dataset.mode; if (fo) theme.font = fo.dataset.font; if (lb) theme.labels = lb.dataset.labels;
+  if (a || m || fo || lb) { try { localStorage.setItem("e29-theme", JSON.stringify(theme)); } catch {} applyTheme(); }
 });
 $("#fontPick").innerHTML = Object.entries(FONTS).map(([k, f]) => `<button type="button" data-font="${k}" style="font-family:${f.b ? f.b + "," : ""}system-ui,sans-serif"><b style="font-family:${f.d ? f.d + "," : ""}system-ui,sans-serif">Aa</b>${f.label}</button>`).join("");
 $("#meBtn").addEventListener("click", e => { e.stopPropagation(); Object.keys(FONTS).forEach(loadFont); const p = $("#mePop"); p.hidden = !p.hidden; $("#meBtn").setAttribute("aria-expanded", String(!p.hidden)); });
@@ -354,30 +356,95 @@ function typeFrom(k, v) {
   if (k === "place" || k === "boundary") return "city";
   return "other";
 }
+async function photon(q, near, limit = 15) {
+  const bias = near ? `&lat=${near.lat}&lon=${near.lon}&location_bias_scale=0.3` : "";
+  const r = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=${limit}&lang=en${bias}`);
+  if (!r.ok) throw new Error("search failed");
+  return (await r.json()).features || [];
+}
+function fromPhoton(f) {
+  const p = f.properties || {}, c = f.geometry?.coordinates || [];
+  if (!p.name || c.length < 2) return null;
+  const t = typeFrom(p.osm_key, p.osm_value);
+  const city = t === "city" ? p.name : (p.city || p.town || p.village || p.district || p.county || p.state || "");
+  const addr = [p.housenumber && p.street ? `${p.housenumber} ${p.street}` : p.street, p.postcode].filter(Boolean).join(", ");
+  const area = [p.locality, p.district].filter(x => x && x !== city).join(", ");
+  return { name: p.name, type: t, city, country: p.country || "", lat: c[1], lon: c[0], addr, area, _all: [p.name, p.street, p.locality, p.district, p.city, p.county, p.postcode].filter(Boolean).join(" ").toLowerCase() };
+}
+// "35.6702, 139.7027" or a Google Maps link → the spot, plus named places right next to it
+const COORD = /^\s*(-?\d{1,2}(?:\.\d+)?)\s*[, ]\s*(-?\d{1,3}(?:\.\d+)?)\s*$/;
+function parsePasted(q) {
+  const m = q.match(COORD); if (m && Math.abs(+m[1]) <= 90 && Math.abs(+m[2]) <= 180) return { lat: +m[1], lon: +m[2], name: "" };
+  if (!/google\.[a-z.]+\/maps|maps\.google\.|goo\.gl\/maps|maps\.app\.goo\.gl/i.test(q)) return null;
+  if (/maps\.app\.goo\.gl|goo\.gl\/maps/i.test(q)) return { short: true };
+  let lat, lon; const d = q.match(/!3d(-?\d+\.\d+)!4d(-?\d+\.\d+)/), at = q.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/), qq = q.match(/[?&](?:q|query|ll|destination)=(-?\d+\.\d+)(?:,|%2C)(-?\d+\.\d+)/i);
+  if (d) [lat, lon] = [+d[1], +d[2]]; else if (qq) [lat, lon] = [+qq[1], +qq[2]]; else if (at) [lat, lon] = [+at[1], +at[2]];
+  const nm = q.match(/\/maps\/place\/([^/@?]+)/); let name = "";
+  if (nm) { try { name = decodeURIComponent(nm[1].replace(/\+/g, " ")); } catch { name = nm[1].replace(/\+/g, " "); } }
+  return lat != null ? { lat, lon, name } : name ? { name } : { bad: true };
+}
+async function resolvePasted(x, near) {
+  if (x.lat == null) return (await searchPlaces(x.name, near)).map(r => ({ ...r }));
+  const [rev, addr] = await Promise.all([
+    fetch(`https://photon.komoot.io/reverse?lat=${x.lat}&lon=${x.lon}&limit=10&radius=0.12&lang=en`).then(r => r.json()).then(j => (j.features || []).map(fromPhoton).filter(y => y && y.type !== "city")).catch(() => []),
+    streetAddress(x.lat, x.lon),
+  ]);
+  const spot = { name: x.name || "Pinned spot", type: "other", city: addr?.city || "", country: addr?.country || "", lat: x.lat, lon: x.lon, addr: [addr?.street, addr?.postcode].filter(Boolean).join(", "), area: "", pinned: true };
+  if (x.name) { const same = rev.find(r => r.name.toLowerCase() === x.name.toLowerCase() || r.name.toLowerCase().includes(x.name.toLowerCase().split(" ")[0])); if (same) spot.type = same.type; }
+  rev.forEach(r => r.d = km(x, r)); rev.sort((a, b) => a.d - b.d);
+  return [spot, ...rev.filter(r => r.d < 0.12 && r.name !== spot.name).slice(0, 6)];
+}
 const searchCache = new Map();
 async function searchPlaces(q, near) {
   const key = q.toLowerCase() + (near ? `@${near.lat.toFixed(1)},${near.lon.toFixed(1)}` : "");
   if (searchCache.has(key)) return searchCache.get(key);
-  const bias = near ? `&lat=${near.lat}&lon=${near.lon}&location_bias_scale=0.3` : "";
-  const r = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(q)}&limit=10&lang=en${bias}`);
-  if (!r.ok) throw new Error("search failed");
-  const j = await r.json(), seen = new Set(), out = [];
-  for (const f of j.features || []) {
-    const p = f.properties || {}, c = f.geometry?.coordinates || [];
-    if (!p.name || c.length < 2) continue;
-    const t = typeFrom(p.osm_key, p.osm_value);
-    const city = t === "city" ? p.name : (p.city || p.town || p.village || p.district || p.county || p.state || "");
-    const addr = [p.housenumber && p.street ? `${p.street} ${p.housenumber}` : p.street, p.postcode].filter(Boolean).join(", ");
-    const x = { name: p.name, type: t, city, country: p.country || "", lat: c[1], lon: c[0], addr };
-    const sig = (x.name + "|" + x.city).toLowerCase(); if (seen.has(sig)) continue; seen.add(sig); out.push(x);
+  const words = q.toLowerCase().split(/[\s,]+/).filter(w => w.length > 1 && !/^(the|st|store|shop|branch|restaurant)$/.test(w));
+  let feats = await photon(q, near);
+  // a long query like "Ippudo Harajuku Takeshita St" may match nothing; search the name, then rank by the other words
+  if (feats.length < 4 && words.length > 1) for (let n = Math.min(2, words.length - 1); n >= 1 && feats.length < 8; n--) feats = [...feats, ...await photon(words.slice(0, n).join(" "), near).catch(() => [])];
+  const seen = new Set(), out = [];
+  for (const f of feats) {
+    const x = fromPhoton(f); if (!x) continue;
+    const sig = (x.name + "|" + x.lat.toFixed(4) + "|" + x.lon.toFixed(4)).toLowerCase(); if (seen.has(sig)) continue; seen.add(sig);
+    x._score = words.filter(w => x._all.includes(w)).length; out.push(x);
   }
+  out.sort((a, b) => b._score - a._score);   // stable: keeps Photon's order among equals
+  out.forEach(x => { delete x._all; delete x._score; });
   searchCache.set(key, out); return out;
+}
+// street address for a spot on the map (OpenStreetMap's Nominatim, in English); used when search had no street
+const addrCache = {};
+async function streetAddress(lat, lon) {
+  const k = lat.toFixed(5) + "," + lon.toFixed(5); if (k in addrCache) return addrCache[k];
+  try {
+    const r = await fetch(`https://nominatim.openstreetmap.org/reverse?format=jsonv2&lat=${lat}&lon=${lon}&zoom=18&addressdetails=1&accept-language=en`);
+    const a = (await r.json()).address || {};
+    const street = [a.house_number, a.road || a.pedestrian || a.footway].filter(Boolean).join(" ") || a.neighbourhood || a.quarter || "";
+    const city = a.city || a.town || a.village || a.city_district || a.suburb || "";
+    return addrCache[k] = { street, postcode: a.postcode || "", city, country: a.country || "", line: [street, [a.postcode, city].filter(Boolean).join(" "), a.country].filter(Boolean).join(", ") };
+  } catch { return addrCache[k] = null; }
+}
+// fills x.addr (and city/country if missing) when the search result came without them
+async function withAddress(x) {
+  if (x.full) return x;
+  if (x.addr && /\d|street|road|st\b|rd\b/i.test(x.addr) || x.type === "city" || x.lat == null) return x;
+  const a = await streetAddress(x.lat, x.lon); if (!a) return x;
+  return { ...x, addr: [a.street, a.postcode].filter(Boolean).join(", ") || x.addr, city: x.city || a.city, country: x.country || a.country };
 }
 const gmapsUrl = x => `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent([x.name, x.city, x.country].filter(Boolean).join(", "))}`;
 function closeSuggest(list, input) { list.hidden = true; list.innerHTML = ""; input.setAttribute("aria-expanded", "false"); input.removeAttribute("aria-activedescendant"); }
 // opts: { near(): {lat,lon}|null, local(q): [{saved place}] , onPick(item) }
 function attachSuggest(input, list, opts) {
-  let timer = 0, items = [], active = -1, seq = 0;
+  let timer = 0, items = [], active = -1, seq = 0, token = null;
+  // picking a Google suggestion fetches its details (address, location) first
+  const pick = async x => {
+    closeSuggest(list, input);
+    if (x.pred) {
+      try { x = await googleDetails(x.pred); } catch { toast("Couldn't get that place from Google. Try again."); return; }
+      token = null;
+    }
+    opts.onPick(x);
+  };
   const show = html => { list.innerHTML = html; list.hidden = false; input.setAttribute("aria-expanded", "true"); };
   const paint = () => {
     let h = "", sec = "";
@@ -385,20 +452,34 @@ function attachSuggest(input, list, opts) {
       const s = x.saved ? "Saved places" : "Search results";
       if (s !== sec && (items.some(y => y.saved))) { h += `<li class="sec" role="presentation">${s}</li>`; sec = s; }
       const t = TYPE[x.type] || TYPE.other;
-      h += `<li role="option" id="${list.id}-${i}" data-i="${i}" aria-selected="${i === active}" class="${x.saved ? "saved" : ""}" style="--tc:${t.col}"><i></i><span><b>${esc(x.name)}</b><small>${esc([x.city !== x.name ? x.city : "", x.country].filter(Boolean).join(", "))}</small></span><em>${x.saved ? (x.day ? "Saved · " + esc(fmtD(x.day)) : "Saved") : esc(t.label)}</em></li>`;
+      h += `<li role="option" id="${list.id}-${i}" data-i="${i}" aria-selected="${i === active}" class="${x.saved ? "saved" : ""}" style="--tc:${t.col}"><i></i><span><b>${esc(x.name)}${x.pinned ? " 📍" : ""}</b><small>${esc([x.addr, x.area, x.city !== x.name ? x.city : "", x.country].filter(Boolean).join(", "))}</small></span><em>${x.saved ? (x.day ? "Saved · " + esc(fmtD(x.day)) : "Saved") : esc(t.label)}</em></li>`;
     });
+    if (items.some(x => x.g)) h += `<li class="note g-attr" role="presentation">Powered by Google</li>`;
     show(h); if (active >= 0) input.setAttribute("aria-activedescendant", `${list.id}-${active}`);
   };
   input.addEventListener("input", () => {
     clearTimeout(timer); const q = input.value.trim();
     const local = opts.local ? opts.local(q) : [];
+    const pasted = parsePasted(q);
+    if (pasted) {
+      if (pasted.short) { show(`<li class="note">That's a short share link, which Trips can't open. In Google Maps, press and hold the spot and copy the coordinates (like 35.6702, 139.7027), or open the link in a browser and copy the full address from the address bar.</li>`); return; }
+      if (pasted.bad) { show(`<li class="note">Couldn't find a location in that link. Try copying the coordinates from Google Maps instead.</li>`); return; }
+      const my = ++seq; show(`<li class="note">Finding that spot…</li>`);
+      resolvePasted(pasted, opts.near ? opts.near() : null).then(res => { if (my !== seq) return; items = res; active = items.length ? 0 : -1; items.length ? paint() : show(`<li class="note">Nothing found there.</li>`); }).catch(() => { if (my === seq) show(`<li class="note">Search isn't responding right now.</li>`); });
+      return;
+    }
     if (q.length < 3) { if (local.length && q.length) { items = local; active = 0; paint(); } else closeSuggest(list, input); return; }
     items = local; active = items.length ? 0 : -1; if (items.length) paint();
     timer = setTimeout(async () => {
       const my = ++seq;
       if (!navigator.onLine) { if (!items.length) show(`<li class="note">Place search needs an internet connection.</li>`); return; }
       try {
-        const res = await searchPlaces(q.replace(/^the\s+/i, ""), opts.near ? opts.near() : null); if (my !== seq) return;
+        let res;
+        if (useGoogle()) {
+          try { const { AutocompleteSessionToken } = await gPlaces(); token ||= new AutocompleteSessionToken(); res = await googleSuggest(q, opts.near ? opts.near() : null, token); }
+          catch { res = null; }
+        }
+        res ||= await searchPlaces(q.replace(/^the\s+/i, ""), opts.near ? opts.near() : null); if (my !== seq) return;
         items = [...local, ...res]; active = items.length ? 0 : -1;
         if (!items.length) show(`<li class="note">No matches for “${esc(q)}”. Try another spelling or add the city.</li>`); else paint();
       } catch { if (my === seq && !items.length) show(`<li class="note">Search isn't responding right now. Try again in a moment.</li>`); }
@@ -408,11 +489,11 @@ function attachSuggest(input, list, opts) {
     if (list.hidden || !items.length) return;
     if (e.key === "ArrowDown") { e.preventDefault(); active = (active + 1) % items.length; paint(); }
     else if (e.key === "ArrowUp") { e.preventDefault(); active = (active - 1 + items.length) % items.length; paint(); }
-    else if (e.key === "Enter" && active >= 0) { e.preventDefault(); const x = items[active]; closeSuggest(list, input); opts.onPick(x); }
+    else if (e.key === "Enter" && active >= 0) { e.preventDefault(); pick(items[active]); }
     else if (e.key === "Escape") { e.stopPropagation(); closeSuggest(list, input); }
   });
   list.addEventListener("mousedown", e => e.preventDefault());
-  list.addEventListener("click", e => { const li = e.target.closest("li[data-i]"); if (!li) return; const x = items[+li.dataset.i]; closeSuggest(list, input); opts.onPick(x); });
+  list.addEventListener("click", e => { const li = e.target.closest("li[data-i]"); if (!li) return; pick(items[+li.dataset.i]); });
   input.addEventListener("blur", () => setTimeout(() => closeSuggest(list, input), 150));
 }
 
@@ -627,15 +708,20 @@ document.addEventListener("focusout", () => setTimeout(() => { if (pendingRender
 
 // ---------------------------------------------------------------- places data
 const placeList = () => Object.entries(T.places).map(([id, p]) => ({ id, ...p, type: TYPE[p.type] ? p.type : "other", hearts: p.hearts || {} }));
+// note bubbles on a day, kept on the day itself; they share the "order" numbers with the day's places
+const dayCards = iso => (T.days[iso]?.cards || []).filter(c => c && c.id);
+const dayItems = iso => [...dayPlaces(iso).map(p => ({ ...p, k: "p" })), ...dayCards(iso).map(c => ({ ...c, k: "n" }))].sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || (a.k === b.k ? 0 : a.k === "n" ? 1 : -1));
+const saveDay = (iso, delay = 0) => save(tp("days/" + iso), T.days[iso], delay);
 const dayPlaces = iso => placeList().filter(p => p.day === iso).sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || (a.time || "").localeCompare(b.time || ""));
 function newPlaceFrom(x, extra = {}) {
   return { name: (x.name || "").slice(0, 80), type: x.type || "other", city: (x.city || "").slice(0, 60), country: (x.country || "").slice(0, 60), lat: x.lat ?? null, lon: x.lon ?? null,
-    addr: x.addr || "", link: x.link || gmapsUrl(x), notes: "", day: "", order: 0, time: "", photo: "", photoUrl: "", photoCredit: "", photoLink: "", photoBy: "", photoSrc: "",
+    addr: x.addr || "", link: x.link || gmapsUrl(x), gid: x.gid || "", notes: "", day: "", order: 0, time: "", photo: "", photoUrl: "", photoCredit: "", photoLink: "", photoBy: "", photoSrc: "",
     hearts: { [ekey(ME.email)]: ME.name }, by: ME.email, created: Date.now(), ...extra };
 }
 function addPlace(x, extra) {
   const id = uidGen(), p = newPlaceFrom(x, extra);
   T.places[id] = p; save(tp("places/" + id), p, 0);
+  withAddress(x).then(y => { if (T.places[id] && (y.addr !== p.addr || y.country !== p.country)) { T.places[id] = { ...T.places[id], addr: y.addr || "", country: T.places[id].country || y.country || "", city: T.places[id].city || y.city || "" }; savePlace(id); } });
   firstPhoto(x).then(ph => {
     if (!ph || !T.places[id] || photoSrcOf(T.places[id])) return;
     const { dl, ...keep } = ph; T.places[id] = { ...T.places[id], ...keep }; save(tp("places/" + id), T.places[id], 0); trackUnsplash(dl);
@@ -746,25 +832,33 @@ function dayHtml(iso, i) {
       ${bk.map(x => `<div class="bk-mini">${x.txt}</div>`).join("")}
       <textarea class="day-notes" id="dn-${iso}" data-notes="${iso}" placeholder="Notes for the day…" rows="${Math.min(8, Math.max(1, notes.split("\n").length))}">${esc(notes)}</textarea>
       ${items.length > 1 ? `<label class="mode-pick">Getting around <select id="md-${iso}" data-mode="${iso}" aria-label="How you'll get around on ${esc(dayLabel(iso))}">${Object.entries(MODES).map(([k, m]) => `<option value="${k}" ${k === mode ? "selected" : ""}>${m.label}</option>`).join("")}</select></label>` : ""}
-      <ol class="stops" data-drop="${iso}">${items.map((p, k) => `<li class="stop-wrap" data-id="${p.id}">
+      <ol class="stops" data-drop="${iso}">${dayItems(iso).map(x => x.k === "n" ? noteHtml(iso, x) : (() => { const p = x, k = items.findIndex(y => y.id === p.id); return `<li class="stop-wrap" data-id="${p.id}">
           ${k && legs[k] != null ? `<div class="leg" aria-hidden="true">${esc(legText(legs[k], mode))}</div>` : ""}
           <div class="stop" style="--tc:${TYPE[p.type].col}">
             <span class="grip" aria-hidden="true">⋮⋮</span><span class="num">${k + 1}</span>
             <span class="thumb">${photoSrcOf(p) ? `<img src="${esc(photoSrcOf(p))}" alt="" loading="lazy" draggable="false" onerror="this.remove()">` : esc(p.name.charAt(0))}</span>
             <span class="info"><span class="nm">${esc(p.name)}</span><span class="sub"><span>${esc(TYPE[p.type].label)}${p.city && p.city !== p.name ? " · " + esc(p.city) : ""}</span><input type="time" id="tm-${p.id}" data-time="${p.id}" value="${esc(p.time || "")}" aria-label="Time for ${esc(p.name)}"></span></span>
             <span class="acts"><button class="iconbtn" type="button" data-up="${p.id}" aria-label="Move ${esc(p.name)} up">↑</button><button class="iconbtn" type="button" data-down="${p.id}" aria-label="Move ${esc(p.name)} down">↓</button><button class="iconbtn" type="button" data-edit="${p.id}" aria-label="Edit ${esc(p.name)}">✎</button><button class="iconbtn del" type="button" data-unsched="${p.id}" aria-label="Remove ${esc(p.name)} from this day">×</button></span>
-          </div></li>`).join("")}</ol>
+          </div></li>`; })()).join("")}</ol>
       ${photos.length ? `<div class="row" style="gap:6px">${photos.map(([, ph]) => `<img src="${esc(ph.data)}" alt="Trip photo" data-zoom style="width:64px;height:48px;object-fit:cover;border-radius:7px;cursor:zoom-in">`).join("")}</div>` : ""}
       ${stay ? `<div class="bk-mini"><b>Staying at</b> ${esc(stay[1].title || "your stay")}</div>` : pts.length ? `<button class="linkbtn find-stay" type="button" data-findstay="c:${esc((pts[0].city || "Day " + (i + 1)).trim())}">No stay booked for this night · Find one nearby</button>` : ""}
       ${openAdd === iso ? `<div class="suggest-wrap add-box"><input id="add-${iso}" autocomplete="off" placeholder="Search saved places or anywhere…" role="combobox" aria-expanded="false" aria-controls="addl-${iso}"><ul class="suggest" id="addl-${iso}" role="listbox" hidden></ul></div>` : ""}
       ${openIdeas === iso ? ideasHtml(iso) : ""}
       <div class="day-actions">
         <button class="btn small ${openAdd === iso ? "ghost" : ""}" type="button" data-add="${iso}">${openAdd === iso ? "Done adding" : "+ Add a place"}</button>
+        <button class="btn ghost small" type="button" data-addnote="${iso}">+ Note</button>
         <button class="btn ghost small" type="button" data-ideas="${iso}" aria-expanded="${openIdeas === iso}">${openIdeas === iso ? "Hide ideas" : "Ideas nearby"}</button>
         ${pts.length > 1 ? `<button class="btn ghost small" type="button" data-opt="${iso}" title="Let the planner put the stops in the shortest order">Optimize route</button>` : ""}
         ${pts.length > 1 ? `<button class="btn ghost small" type="button" data-dir="${iso}">Directions</button>` : ""}
       </div>
     </div></section>`;
+}
+function noteHtml(iso, c) {
+  return `<li class="stop-wrap note-wrap" data-id="n:${c.id}"><div class="dnote">
+    <span class="grip" aria-hidden="true">⋮⋮</span><span class="dn-ic" aria-hidden="true">✎</span>
+    <textarea id="cn-${c.id}" data-card="${iso}|${c.id}" rows="1" maxlength="1000" placeholder="Write a note… (e.g. bag drop at the hotel, gate info)" aria-label="Note">${esc(c.text || "")}</textarea>
+    <input type="time" id="ct-${c.id}" data-ctime="${iso}|${c.id}" value="${esc(c.time || "")}" aria-label="Time for this note">
+    <button class="iconbtn del" type="button" data-cdel="${iso}|${c.id}" aria-label="Delete note">×</button></div></li>`;
 }
 function dirUrl(pts, mode = "walk") {
   const ll = p => `${p.lat},${p.lon}`, mid = pts.slice(1, -1).slice(0, 9);
@@ -793,7 +887,27 @@ function directionsModal(iso) {
   if (pref) { const a = $(`[data-app="${pref}"]`); if (a) { a.classList.add("pref"); a.focus(); } }
 }
 function reorderDay(iso, ids) {
-  ids.forEach((id, k) => { if (T.places[id] && (T.places[id].order !== k || T.places[id].day !== iso)) { T.places[id] = { ...T.places[id], day: iso, order: k }; savePlace(id); } });
+  let full = ids;
+  if (dayCards(iso).length && !ids.some(x => String(x).startsWith("n:"))) {
+    // only places were reordered: each note stays in the slot it was in
+    const q = ids.slice(); full = dayItems(iso).map(x => x.k === "n" ? "n:" + x.id : q.shift()).filter(x => x !== undefined); full.push(...q);
+  }
+  const touched = new Set();
+  full.forEach((id, k) => {
+    if (String(id).startsWith("n:")) {
+      const nid = id.slice(2);
+      let card = dayCards(iso).find(c => c.id === nid);
+      if (!card) {   // dragged here from another day
+        for (const [d, v] of Object.entries(T.days)) { const c = (v?.cards || []).find(c => c.id === nid); if (c && d !== iso) { T.days[d] = { ...v, cards: v.cards.filter(x => x.id !== nid) }; touched.add(d); card = c; } }
+        if (!card) return;
+        T.days[iso] = { ...(T.days[iso] || {}), cards: [...dayCards(iso), card] };
+      }
+      if (card.order !== k) { T.days[iso] = { ...T.days[iso], cards: dayCards(iso).map(c => c.id === nid ? { ...c, order: k } : c) }; }
+      touched.add(iso); return;
+    }
+    if (T.places[id] && (T.places[id].order !== k || T.places[id].day !== iso)) { T.places[id] = { ...T.places[id], day: iso, order: k }; savePlace(id); }
+  });
+  touched.forEach(d => saveDay(d));
 }
 function optimizeAsk(iso) {
   const st = stayFor(iso) || stayFor(addDays(iso, -1)), sb = st && st[1].lat != null ? st[1] : null;
@@ -850,6 +964,17 @@ function wirePlan(v) {
     if (b.dataset.opt) return optimizeAsk(b.dataset.opt);
     if (b.dataset.dir) return directionsModal(b.dataset.dir);
     if (b.dataset.findstay) return staysModal(b.dataset.findstay);
+    if (b.dataset.addnote) {
+      const iso = b.dataset.addnote, id = uidGen(), all = dayItems(iso), order = all.length ? Math.max(...all.map(x => x.order ?? 0)) + 1 : 0;
+      T.days[iso] = { ...(T.days[iso] || {}), cards: [...dayCards(iso), { id, text: "", time: "", order }] }; saveDay(iso);
+      renderTrip(); document.getElementById("cn-" + id)?.focus(); return;
+    }
+    if (b.dataset.cdel) {
+      const [iso, id] = b.dataset.cdel.split("|"), was = dayCards(iso);
+      T.days[iso] = { ...T.days[iso], cards: was.filter(c => c.id !== id) }; saveDay(iso); renderTrip();
+      if (was.find(c => c.id === id)?.text) toast("Note deleted.", { label: "Undo", run: () => { T.days[iso] = { ...T.days[iso], cards: was }; saveDay(iso); renderTrip(); } });
+      return;
+    }
     if (b.dataset.dcolor) { openColor = openColor === b.dataset.dcolor ? null : b.dataset.dcolor; renderTrip(); return; }
     if (b.dataset.setcol) { const iso = b.dataset.setcol; T.days[iso] = { ...(T.days[iso] || {}), color: b.dataset.c }; save(tp("days/" + iso), T.days[iso], 0); openColor = null; renderTrip(); renderMap(); return; }
     if (b.dataset.edit) return placeModal(b.dataset.edit);
@@ -863,21 +988,24 @@ function wirePlan(v) {
   });
   v.addEventListener("keydown", e => { const f = e.target.closest("[data-focus]"); if (f && e.target === f && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); f.click(); } });
   v.addEventListener("input", e => {
+    if (e.target.dataset.card) { const [iso, id] = e.target.dataset.card.split("|"); growNote(e.target); T.days[iso] = { ...T.days[iso], cards: dayCards(iso).map(c => c.id === id ? { ...c, text: e.target.value.slice(0, 1000) } : c) }; saveDay(iso, 700); return; }
     if (e.target.dataset.notes) { const iso = e.target.dataset.notes; T.days[iso] = { ...(T.days[iso] || {}), notes: e.target.value.slice(0, 2000) }; save(tp("days/" + iso), T.days[iso], 700); }
   });
   v.addEventListener("change", e => {
+    if (e.target.dataset.ctime) { const [iso, id] = e.target.dataset.ctime.split("|"); T.days[iso] = { ...T.days[iso], cards: dayCards(iso).map(c => c.id === id ? { ...c, time: e.target.value } : c) }; saveDay(iso, 300); }
     if (e.target.dataset.time) { const id = e.target.dataset.time; T.places[id] = { ...T.places[id], time: e.target.value }; savePlace(id, 300); }
     if (e.target.dataset.mode) { const iso = e.target.dataset.mode; T.days[iso] = { ...(T.days[iso] || {}), mode: e.target.value }; save(tp("days/" + iso), T.days[iso], 0); e.target.blur(); renderTrip(); }
   });
   // smooth drag and drop (SortableJS): reorder within a day or move to another day
   if (window.Sortable) $$(".stops[data-drop]", v).forEach(list => Sortable.create(list, {
     group: "days", animation: 220, easing: "cubic-bezier(.2,.8,.2,1)", draggable: ".stop-wrap",
-    filter: "input, button, select", preventOnFilter: false, delay: 140, delayOnTouchOnly: true, fallbackTolerance: 4,
+    filter: "input, button, select, textarea", preventOnFilter: false, delay: 140, delayOnTouchOnly: true, fallbackTolerance: 4,
     ghostClass: "sort-ghost", chosenClass: "sort-chosen", dragClass: "sort-drag", forceFallback: true, fallbackOnBody: true, scroll: true, scrollSensitivity: 90, bubbleScroll: true,
     onStart: () => { dragging = true; v.classList.add("is-dragging"); },
     onEnd: evt => {
       v.classList.remove("is-dragging");
-      const ids = el => $$(".stop-wrap", el).map(li => li.dataset.id);
+      // skip the hidden copy Sortable leaves behind while dragging, and any repeats
+      const ids = el => [...new Set($$(":scope > .stop-wrap", el).filter(li => li.style.display !== "none" && li.dataset.id).map(li => li.dataset.id))];
       const to = evt.to.dataset.drop, from = evt.from.dataset.drop;
       if (to) reorderDay(to, ids(evt.to));   // dropped onto the saved-places list instead: that list unschedules it
       if (from && from !== to) reorderDay(from, ids(evt.from));
@@ -886,7 +1014,9 @@ function wirePlan(v) {
     },
   }));
   if (openAdd && $("#add-" + openAdd)) wireAdd(openAdd);
+  $$(".dnote textarea", v).forEach(growNote);
 }
+const growNote = el => { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; };
 function focusDay(iso) { mapFocus = iso; fitPending = true; renderTrip(); renderMap(); }
 
 // ---------------------------------------------------------------- ideas nearby (Wikipedia: popular articles with coordinates near the day)
@@ -1004,7 +1134,7 @@ function viewPlaces(v) {
   v.innerHTML = `<div class="row between"><h2>Places</h2><button class="btn ghost small" type="button" id="fillPh" ${all.some(p => !photoSrcOf(p)) ? "" : "hidden"}>Find missing photos</button></div>
     <div class="card" style="display:grid;gap:8px"><h3 style="color:var(--accent)">Add a place</h3>
       <div class="suggest-wrap"><input id="pq" autocomplete="off" placeholder="Search anywhere, e.g. Sagrada Família, a café, a beach…" role="combobox" aria-expanded="false" aria-controls="pql" data-live><ul class="suggest" id="pql" role="listbox" hidden></ul></div>
-      <p class="hint">Picked places get their type, location, a Google Maps link and a photo when one is free to use. <button class="linkbtn" type="button" id="manual">Add one by hand</button></p></div>
+      <p class="hint">Picked places get their type, location, a Google Maps link and a photo when one is free to use. Can't find the right branch? Add the neighborhood or street, or paste a Google Maps link or coordinates (in Google Maps, press and hold the spot to copy them). <button class="linkbtn" type="button" id="manual">Add one by hand</button></p></div>
     ${all.length ? `<div class="card filters">
       <input class="input" id="pfq" type="search" placeholder="Filter by name, note or city" value="${esc(PF.q)}" data-live>
       ${chips("type", TYPES.map(([k, l]) => [k, l, all.filter(p => p.type === k).length]).filter(x => x[2]))}
@@ -1263,7 +1393,8 @@ function bookingModal(id, kind, prefill = {}) {
     $("#bmStops").addEventListener("input", e => { const i = e.target.dataset.si; if (i != null) stops[+i][e.target.dataset.sf] = e.target.value.slice(0, 50); });
     $("#bmStops").addEventListener("click", e => { const r = e.target.closest("[data-rs]"); if (r) { stops.splice(+r.dataset.rs, 1); paintStops(); } });
     $("#bm-depDate").addEventListener("change", e => { if (!$("#bm-arrDate").value) $("#bm-arrDate").value = e.target.value; });
-    attachSuggest($("#bm-addr"), $("#bmAddrL"), { near: () => nearPoint(null), onPick: x => { loc = { lat: x.lat, lon: x.lon }; $("#bm-addr").value = [x.name, x.addr, x.city].filter(Boolean).join(", "); if (!$("#bm-title").value) $("#bm-title").value = x.name; } });
+    attachSuggest($("#bm-addr"), $("#bmAddrL"), { near: () => nearPoint(null), onPick: async x => { loc = { lat: x.lat, lon: x.lon }; $("#bm-addr").value = (x.full ? [x.name, x.addr] : [x.name, x.addr, x.city, x.country]).filter(Boolean).join(", "); if (!$("#bm-title").value) $("#bm-title").value = x.name;
+      const y = await withAddress(x); if (loc?.lat === x.lat && y.addr !== x.addr) $("#bm-addr").value = [y.name, y.addr, y.city, y.country].filter(Boolean).join(", "); } });
     $("#bm-addr").addEventListener("input", () => { loc = null; });
     if (id) $("#bmDel").onclick = () => { if (!armed) { armed = true; $("#bmDel").textContent = "Tap again to delete"; return; } delete T.bookings[id]; remove(tp("bookings/" + id)); closeModal(); renderTrip(); renderMap(); };
     $("#bmSave").onclick = () => {
@@ -1512,30 +1643,36 @@ async function staysModal(preKey) {
       const L2 = list.filter(x => !kind || x.tags.tourism === kind).slice(0, 30);
       const ci = validIso(area.from) ? area.from : "", co = validIso(area.to) ? area.to : "";
       el.innerHTML = L2.map(x => {
-        const t = x.tags, stars = parseInt(t.stars) || 0, addr = [t["addr:street"] && (t["addr:street"] + (t["addr:housenumber"] ? " " + t["addr:housenumber"] : "")), t["addr:city"] || area.label].filter(Boolean).join(", ");
+        const t = x.tags, stars = parseInt(t.stars) || 0, addr = t._addr || [t["addr:street"] && (t["addr:street"] + (t["addr:housenumber"] ? " " + t["addr:housenumber"] : "")), t["addr:city"] || area.label].filter(Boolean).join(", ");
         const bq = encodeURIComponent(`${t.name} ${t["addr:city"] || area.label}`), web = safeUrl(t.website || t["contact:website"]);
         return `<div class="near"><div class="grow"><b>${esc(t.name)}</b>${stars ? ` <span class="stars" aria-label="${stars} stars">${"★".repeat(Math.min(stars, 5))}</span>` : ""}
-          <span class="hint">${esc(STAYT[t.tourism] || "Stay")} · ${distTxt(x.d)} from ${area.airport ? "the airport" : `your ${esc(area.label)} places`}${addr ? " · " + esc(addr) : ""}</span>
-          <span class="near-links">${web ? `<a class="ext" href="${esc(web)}" target="_blank" rel="noopener">Website ↗</a>` : ""}<a class="ext" href="https://www.google.com/maps/search/?api=1&query=${bq}" target="_blank" rel="noopener">Maps ↗</a><a class="ext" href="https://www.booking.com/searchresults.html?ss=${bq}${ci ? "&checkin=" + ci : ""}${co ? "&checkout=" + co : ""}" target="_blank" rel="noopener">Booking.com ↗</a></span></div>
+          <span class="hint">${t._rating ? `<b class="g-rate">${esc(ratingTxt(t))}</b> · ` : ""}${esc(STAYT[t.tourism] || "Stay")} · ${distTxt(x.d)} from ${area.airport ? "the airport" : `your ${esc(area.label)} places`}${addr ? " · " + esc(addr) : ""}</span>
+          <span class="near-links">${web ? `<a class="ext" href="${esc(web)}" target="_blank" rel="noopener">Website ↗</a>` : ""}<a class="ext" href="${esc(safeUrl(t._maps) || "https://www.google.com/maps/search/?api=1&query=" + bq)}" target="_blank" rel="noopener">Maps ↗</a><a class="ext" href="https://www.booking.com/searchresults.html?ss=${bq}${ci ? "&checkin=" + ci : ""}${co ? "&checkout=" + co : ""}" target="_blank" rel="noopener">Booking.com ↗</a></span></div>
           <button class="btn small" type="button" data-pick="${esc(x.id)}">Add as stay</button></div>`;
-      }).join("") || `<p class="hint">Nothing found within a few km. Try another area.</p>`;
+      }).join("") + (L2.some(x => x.g) ? G_ATTR : "") || `<p class="hint">Nothing found within a few km. Try another area.</p>`;
     };
     const load = async () => {
       list = null; paint();
       try {
-        let r = await overpass(area.lat, area.lon, 1500, ['[tourism~"^(hotel|hostel|guest_house|apartment|motel)$"]']);
-        if (r.length < 6) r = await overpass(area.lat, area.lon, 4000, ['[tourism~"^(hotel|hostel|guest_house|apartment|motel)$"]']);
+        let r = null;
+        if (useGoogle()) { try { r = await googleNearby(area.lat, area.lon, 2500, ["lodging"]); if (r.length < 6) r = await googleNearby(area.lat, area.lon, 6000, ["lodging"]); } catch { r = null; } }
+        if (!r) { r = await overpass(area.lat, area.lon, 1500, ['[tourism~"^(hotel|hostel|guest_house|apartment|motel)$"]']);
+          if (r.length < 6) r = await overpass(area.lat, area.lon, 4000, ['[tourism~"^(hotel|hostel|guest_house|apartment|motel)$"]']); }
         r.forEach(x => x.d = km(area, x)); r.sort((a, b) => a.d - b.d); list = r;
       } catch { list = { err: "The map service is busy right now. Try again in a minute." }; }
       paint();
     };
     $("#syArea").onchange = e => { area = areas.find(a => a.key === e.target.value); load(); };
     $("#syKind").onchange = e => { kind = e.target.value; paint(); };
-    $("#syList").addEventListener("click", e => {
+    $("#syList").addEventListener("click", async e => {
       const b = e.target.closest("[data-pick]"); if (!b) return;
       const x = list.find(y => y.id === b.dataset.pick), t = x.tags;
+      b.disabled = true; b.textContent = "Getting address…";
+      if (t._addr) { closeModal(); bookingModal(null, "lodging", { title: t.name.slice(0, 80), addr: [t.name, t._addr].join(", "), lat: x.lat, lon: x.lon, checkIn: validIso(area.from) ? area.from : "", checkOut: validIso(area.to) ? area.to : "", checkInTime: "15:00", checkOutTime: "11:00", planned: true }); return; }
+      let street = t["addr:street"] ? [t["addr:housenumber"], t["addr:street"]].filter(Boolean).join(" ") : "", city = t["addr:city"] || "", pc = t["addr:postcode"] || "", country = "";
+      if (!street || !city) { const a = await streetAddress(x.lat, x.lon); if (a) { street ||= a.street; city ||= a.city; pc ||= a.postcode; country = a.country; } }
       closeModal();
-      bookingModal(null, "lodging", { title: t.name.slice(0, 80), addr: [t.name, t["addr:street"] && (t["addr:street"] + (t["addr:housenumber"] ? " " + t["addr:housenumber"] : "")), t["addr:city"] || area.label].filter(Boolean).join(", "), lat: x.lat, lon: x.lon, checkIn: validIso(area.from) ? area.from : "", checkOut: validIso(area.to) ? area.to : "", checkInTime: "15:00", checkOutTime: "11:00", planned: true });
+      bookingModal(null, "lodging", { title: t.name.slice(0, 80), addr: [t.name, street, [pc, city || area.label].filter(Boolean).join(" "), country].filter(Boolean).join(", "), lat: x.lat, lon: x.lon, checkIn: validIso(area.from) ? area.from : "", checkOut: validIso(area.to) ? area.to : "", checkInTime: "15:00", checkOutTime: "11:00", planned: true });
     });
     load();
   });
@@ -1564,8 +1701,8 @@ function viewFood(v) {
         <div class="seg" role="group" aria-label="Kind">${Object.entries(EATL).map(([k, l]) => `<button type="button" data-eatk="${k}" aria-pressed="${eat.kind === k}">${l}</button>`).join("")}</div>
         <button class="btn accent small" type="button" id="eatGo">${eat.busy ? "Searching…" : "Search"}</button></div>
         ${eat.list?.err ? `<p class="hint">${esc(eat.list.err)}</p>` : eat.list ? `<div class="near-list">${eat.list.slice(0, 24).map(x => { const t = x.tags, saved = all.some(p => p.name.toLowerCase() === t.name.toLowerCase());
-          return `<div class="near"><div class="grow"><b>${esc(t.name)}</b><span class="hint">${esc((t.cuisine || "").split(";").map(c => c.replace(/_/g, " ")).filter(Boolean).slice(0, 3).join(", ") || EATL[eat.kind].replace(/s( &.*)?$/, ""))} · ${distTxt(x.d)} away${t.opening_hours ? " · " + esc(t.opening_hours.slice(0, 40)) : ""}</span></div>
-            <button class="btn small ${saved ? "ghost" : ""}" type="button" data-eat="${esc(x.id)}" ${saved ? "disabled" : ""}>${saved ? "Saved" : "Save"}</button></div>`; }).join("") || `<p class="hint">Nothing found nearby.</p>`}</div>` : `<p class="hint">Searches OpenStreetMap around ${area ? `your ${esc(area.label)} places` : "your plans"}.</p>`}`
+          return `<div class="near"><div class="grow"><b>${esc(t.name)}</b><span class="hint">${t._rating ? `<b class="g-rate">${esc(ratingTxt(t))}</b> · ` : ""}${esc((t.cuisine || "").split(";").map(c => c.replace(/_/g, " ")).filter(Boolean).slice(0, 3).join(", ") || EATL[eat.kind].replace(/s( &.*)?$/, ""))} · ${distTxt(x.d)} away${t.opening_hours ? " · " + esc(t.opening_hours.slice(0, 40)) : ""}</span></div>
+            <button class="btn small ${saved ? "ghost" : ""}" type="button" data-eat="${esc(x.id)}" ${saved ? "disabled" : ""}>${saved ? "Saved" : "Save"}</button></div>`; }).join("") || `<p class="hint">Nothing found nearby.</p>`}${eat.list.some(x => x.g) ? G_ATTR : ""}</div>` : `<p class="hint">Searches OpenStreetMap around ${area ? `your ${esc(area.label)} places` : "your plans"}.</p>`}`
       : `<p class="hint">Schedule a few places in the Itinerary, and you can search for food around them here.</p>`}</div>
     ${all.length ? `<div class="card filters">${chips("kind", Object.entries(EATL).map(([k, l]) => [k, l, all.filter(p => p.type === k).length]).filter(x => x[2]))}
       ${count(p => p.country).length > 1 ? chips("country", count(p => p.country).map(([c, n]) => [c, c, n])) : ""}
@@ -1576,8 +1713,11 @@ function viewFood(v) {
   const go = async () => {
     const a = tripAreas().find(x => x.key === eat.area); if (!a) return;
     eat.busy = true; renderTrip();
-    try { let r = await overpass(a.lat, a.lon, 800, EATQ[eat.kind], 120); if (r.length < 8) r = await overpass(a.lat, a.lon, 2000, EATQ[eat.kind], 120);
-      r.forEach(x => x.d = km(a, x)); r.sort((p, q) => (q.tags.cuisine ? 0.15 : 0) - (p.tags.cuisine ? 0.15 : 0) + p.d - q.d); eat.list = r; eat.city = a.label; eat.country = a.country; }
+    const GT = { food: ["restaurant"], cafe: ["cafe", "bakery", "coffee_shop"], night: ["bar", "pub"] };
+    try { let r = null;
+      if (useGoogle()) { try { r = await googleNearby(a.lat, a.lon, 1200, GT[eat.kind]); if (r.length < 8) r = await googleNearby(a.lat, a.lon, 3000, GT[eat.kind]); } catch { r = null; } }
+      if (!r) { r = await overpass(a.lat, a.lon, 800, EATQ[eat.kind], 120); if (r.length < 8) r = await overpass(a.lat, a.lon, 2000, EATQ[eat.kind], 120); }
+      r.forEach(x => x.d = km(a, x)); if (!r.some(x => x.g)) r.sort((p, q) => (q.tags.cuisine ? 0.15 : 0) - (p.tags.cuisine ? 0.15 : 0) + p.d - q.d); eat.list = r; eat.city = a.label; eat.country = a.country; }
     catch { eat.list = { err: "The map service is busy right now. Try again in a minute." }; }
     eat.busy = false; if (cur?.tab === "food") renderTrip();
   };
@@ -1586,8 +1726,9 @@ function viewFood(v) {
     const k = e.target.closest("[data-eatk]"); if (k) { eat.kind = k.dataset.eatk; eat.list = null; renderTrip(); return; }
     const sv = e.target.closest("[data-eat]");
     if (sv) { const x = eat.list.find(y => y.id === sv.dataset.eat), t = x.tags;
-      const id = addPlace({ name: t.name, type: eat.kind, city: t["addr:city"] || eat.city, country: eat.country, lat: x.lat, lon: x.lon, addr: [t["addr:street"], t["addr:housenumber"]].filter(Boolean).join(" "), link: safeUrl(t.website) || gmapsUrl({ name: t.name, city: t["addr:city"] || eat.city }) },
-        { notes: (t.cuisine || "").split(";").map(c => c.replace(/_/g, " ")).filter(Boolean).slice(0, 3).join(", ") });
+      const id = addPlace(x.g ? { name: t.name, type: eat.kind, city: eat.city, country: eat.country, lat: x.lat, lon: x.lon, addr: t._addr, full: true, gid: t._gid, link: safeUrl(t._maps) || gmapsUrl({ name: t.name, city: eat.city }) }
+        : { name: t.name, type: eat.kind, city: t["addr:city"] || eat.city, country: eat.country, lat: x.lat, lon: x.lon, addr: [t["addr:street"], t["addr:housenumber"]].filter(Boolean).join(" "), link: safeUrl(t.website) || gmapsUrl({ name: t.name, city: t["addr:city"] || eat.city }) },
+        { notes: [(t.cuisine || "").split(";").map(c => c.replace(/_/g, " ")).filter(Boolean).slice(0, 3).join(", "), ratingTxt(t)].filter(Boolean).join(" · ") });
       if (!eat.country) reverseGeo(x.lat, x.lon).then(g => { if (g?.country && T.places[id]) { T.places[id] = { ...T.places[id], country: g.country }; savePlace(id); } });
       toast(`Saved ${esc(t.name)}.`); renderTrip(); renderMap(); return; }
     if (e.target.closest("[data-new-res]")) return bookingModal(null, "reservation");
@@ -1756,11 +1897,13 @@ function gmailModal() {
 // ================================================================ HELP
 const HELP = [
   ["start", "Getting started", `<p>Each trip has its own map, day-by-day plan, bookings and budget. Make one with <b>New trip</b> on the home page, then open <b>Share</b> to invite people by their Google email. Everyone on a trip can edit it, and changes show up for everyone right away.</p>
-    <p>Wide screens show sections on the left, the page in the middle and the map on the right. Use <b>List / Split / Map</b> at the top to hide the map or make it bigger. On a phone, the <b>Map</b> button switches between the two.</p>`],
+    <p>Wide screens show sections on the left, the page in the middle and the map on the right. Use <b>List / Split / Map</b> at the top to hide the map or make it bigger. On a phone, the <b>Map</b> button switches between the two.</p>
+    <p>Map labels are in English by default, even in places like Japan. To change that, tap your picture (top right) → <b>Map labels</b> and pick English, Both (English with the local name under it) or Local.</p>`],
   ["places", "Places to visit", `<p>Search for anything (a museum, a beach, a café) and pick it from the list. Trips fills in the type, city, country, map pin and a photo when one is free to use. Tap ♥ on the places you're most excited about.</p>
     <p>Filter by type, <b>country</b> and city. The city list narrows to the country you pick. Places saved without a country get one filled in automatically from their location.</p>`],
-  ["plan", "Itinerary", `<ul><li><b>Add places</b> with <i>+ Add a place</i> on a day, or open <b>Saved places</b> and drag them into days.</li>
+  ["plan", "Itinerary", `<ul><li><b>Add places</b> with <i>+ Add a place</i> on a day, or open <b>Saved places</b> and drag them into days. If search shows several branches, check the street and neighborhood under each name. You can also paste a Google Maps link, or coordinates copied by pressing and holding a spot in Google Maps.</li>
     <li><b>Reorder</b> by dragging, or with the ↑ ↓ buttons.</li>
+    <li><b>Notes</b>: <i>+ Note</i> adds a note bubble to a day, with an optional time. Drag it between stops (say, one for the airport and one for when you reach the hotel), or onto another day.</li>
     <li><b>Optimize route</b>: the planner works out the shortest order for the day's stops. You can start and end the day at your hotel. It measures straight-line distance, and you can undo it.</li>
     <li><b>Directions</b> opens the day in Apple Maps or Google Maps, your choice, and it can remember which one you like.</li>
     <li><b>Day colors</b>: tap the colored dot next to a day's date and pick from 18 colors. The map uses the same color.</li>
@@ -1779,6 +1922,12 @@ const HELP = [
   ["budget", "Budget and money", `<p>Log what you spend in any currency. Trips converts it to the trip's home currency with that day's exchange rate, splits it between the people you pick, and works out who owes whom. Bookings with a cost count too.</p>`],
   ["lists", "To-do and packing", `<p><b>To-do</b> is shared: assign tasks and set due dates. <b>Packing</b> is private: everyone on the trip has their own list.</p>`],
   ["export", "Export and offline", `<p><b>Export PDF</b> builds a printable trip book (itinerary with route sketches, bookings, budget, lists). Pick what to include, then save as PDF. Once you've opened a trip, it keeps working offline, and your edits sync when you're back online.</p>`],
+  ["google", "Google Maps (optional)", `<p>With a Google Maps key, Trips uses Google for the map, for search (so it can tell branches like Ippudo Harajuku and Ippudo Shinjuku apart, with exact addresses), and for <i>Stays nearby</i> and <i>Find places to eat</i>, with ratings. Without a key, it uses the free OpenStreetMap versions.</p>
+    <ol><li>In <a href="https://console.cloud.google.com/billing" target="_blank" rel="noopener">Google Cloud → Billing</a>, link a billing account to your Firebase project.</li>
+    <li>Enable <a href="https://console.cloud.google.com/apis/library/maps-backend.googleapis.com" target="_blank" rel="noopener">Maps JavaScript API</a> and <a href="https://console.cloud.google.com/apis/library/places.googleapis.com" target="_blank" rel="noopener">Places API (New)</a>.</li>
+    <li>In <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Credentials</a>, click <b>Create credentials → API key</b>. Under <b>Application restrictions</b>, choose <b>Websites</b> and add <code>https://sallylsm.github.io/*</code>. Under <b>API restrictions</b>, pick the two APIs above.</li>
+    <li>Add this line to <code>config.js</code>: <code>export const googleMapsKey = "your-key";</code></li>
+    <li>To be sure it stays free: set daily limits on each API's <b>Quotas</b> page, and add a $1 alert in <b>Billing → Budgets &amp; alerts</b>.</li></ol>`],
   ["status", "Live flight status (optional)", `<p>Tracking links always work. To see live status and get change alerts inside Trips, add a free flight-status key:</p>
     <ol><li>Make a free account at <a href="https://rapidapi.com/aedbx-aedbx/api/aerodatabox" target="_blank" rel="noopener">AeroDataBox on RapidAPI</a> and subscribe to the free <b>Basic</b> plan.</li>
     <li>Copy your <b>X-RapidAPI-Key</b> and add this line to <code>config.js</code>: <code>export const flightStatusKey = "your-key";</code></li></ol>
@@ -2058,12 +2207,12 @@ function printHtml() {
   if (O.itinerary && days.length) {
     h += `<section class="pb-sec pb-big"><h2>Itinerary</h2>`;
     days.forEach((iso, i) => {
-      const ps = dayPlaces(iso), bk = bookingsOn(iso), stay = stayFor(iso), mode = dayMode(iso), notes = T.days[iso]?.notes || "", col = getComputedStyle(document.documentElement).getPropertyValue(DAYCOLS[i % DAYCOLS.length]).trim() || "#D9483B";
+      const ps = dayPlaces(iso), bk = bookingsOn(iso), stay = stayFor(iso), mode = dayMode(iso), notes = T.days[iso]?.notes || "", col = colVal(dayColor(iso, i));
       const legs = ps.map((p, k) => k && hasPt(ps[k - 1]) && hasPt(p) ? legText(km(ps[k - 1], p), mode) : "");
       h += `<article class="pb-day"><header style="border-color:${col}"><span class="pb-dn" style="background:${col}">${i + 1}</span><div><h3>${esc(fmtD(iso, { weekday: "long", month: "long", day: "numeric" }))}</h3><span>${ps.length ? ps.length + " place" + (ps.length === 1 ? "" : "s") + " · " + MODES[mode].label : bk.some(x => (KINDS[x.b.kind] || KINDS.other).group === "transport") ? "Travel day" : "Free day"}${stay ? " · staying at " + esc(stay[1].title || "") : ""}</span></div></header>
-        ${!ps.length && !bk.length && !notes ? "" : `<div class="pb-day-body"><div class="pb-day-main">
+        ${!ps.length && !bk.length && !notes && !dayCards(iso).some(c => c.text) ? "" : `<div class="pb-day-body"><div class="pb-day-main">
           ${bk.map(x => `<p class="pb-bk">${x.txt}${x.b.conf ? ` · conf. <b>${esc(x.b.conf)}</b>` : ""}</p>`).join("")}
-          ${ps.length ? `<ol class="pb-stops">${ps.map((p, k) => `${legs[k] ? `<li class="pb-leg">${esc(legs[k])}</li>` : ""}<li class="pb-stop"><span class="pb-num" style="background:${col}">${k + 1}</span>${O.photos && photoSrcOf(p) ? `<span class="pb-thumb">${img(photoSrcOf(p))}</span>` : ""}<div><b>${esc(p.name)}</b>${p.time ? ` <span class="pb-time">${esc(p.time)}</span>` : ""}<br><span class="pb-meta">${esc(TYPE[p.type].label)}${p.city && p.city !== p.name ? " · " + esc(p.city) : ""}${hasPt(p) ? ` · <a href="${esc(gmapsUrl(p))}">map</a>` : ""}</span>${p.notes ? `<br><span class="pb-note">${esc(p.notes)}</span>` : ""}</div></li>`).join("")}</ol>` : ""}
+          ${ps.length || dayCards(iso).some(c => c.text) ? `<ol class="pb-stops">${dayItems(iso).map(x => { if (x.k === "n") return x.text ? `<li class="pb-cnote">${x.time ? `<b>${esc(x.time)}</b> ` : ""}${esc(x.text).replace(/\n/g, "<br>")}</li>` : ""; const p = x, k = ps.findIndex(y => y.id === p.id); return `${legs[k] ? `<li class="pb-leg">${esc(legs[k])}</li>` : ""}<li class="pb-stop"><span class="pb-num" style="background:${col}">${k + 1}</span>${O.photos && photoSrcOf(p) ? `<span class="pb-thumb">${img(photoSrcOf(p))}</span>` : ""}<div><b>${esc(p.name)}</b>${p.time ? ` <span class="pb-time">${esc(p.time)}</span>` : ""}<br><span class="pb-meta">${esc(TYPE[p.type].label)}${p.city && p.city !== p.name ? " · " + esc(p.city) : ""}${hasPt(p) ? ` · <a href="${esc(gmapsUrl(p))}">map</a>` : ""}</span>${p.notes ? `<br><span class="pb-note">${esc(p.notes)}</span>` : ""}</div></li>`; }).join("")}</ol>` : ""}
           ${notes ? `<p class="pb-notes">${esc(notes).replace(/\n/g, "<br>")}</p>` : ""}
         </div>${O.sketches ? routeSketch(ps, col) : ""}</div>`}</article>`;
     });
@@ -2255,13 +2404,138 @@ function initMap() {
   layer = L.layerGroup().addTo(map);
   setTiles(); fitPending = true;
 }
-function setTiles() {
+
+// ================================================================ GOOGLE MAPS (when a key is in config.js)
+let gReady = null, gFailed = false;
+const useGoogle = () => !!GKEY && !gFailed;
+function loadGoogle() {
+  if (!useGoogle()) return Promise.reject(new Error("off"));
+  return gReady ||= new Promise((res, rej) => {
+    window.__gmInit = () => res();
+    // Google calls this when the key is wrong or not allowed on this site
+    window.gm_authFailure = () => { gFailed = true; gReady = null; toast("Google Maps didn't accept the key, so Trips is using the free map and search. Check the key's website restriction and that billing is on."); setTiles(); };
+    const el = document.createElement("script");
+    el.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(GKEY)}&v=weekly&language=en&libraries=places&loading=async&callback=__gmInit`;
+    el.async = true; el.onerror = () => { gReady = null; rej(new Error("load")); }; document.head.append(el);
+    setTimeout(() => rej(new Error("slow")), 12000);
+  });
+}
+const gPlaces = async () => { await loadGoogle(); return google.maps.importLibrary("places"); };
+// Google place types → this app's types
+function gType(types = []) {
+  const has = (...k) => k.some(x => types.includes(x));
+  if (has("country", "locality", "administrative_area_level_1", "administrative_area_level_2", "sublocality", "neighborhood", "postal_town", "colloquial_area", "archipelago", "island")) return "city";
+  if (has("cafe", "coffee_shop", "bakery", "tea_house", "dessert_shop", "ice_cream_shop", "donut_shop")) return "cafe";
+  if (has("bar", "pub", "night_club", "wine_bar", "casino")) return "night";
+  if (has("restaurant", "food", "meal_takeaway", "meal_delivery", "food_court", "fast_food_restaurant")) return "food";
+  if (has("museum", "art_gallery")) return "museum";
+  if (has("market", "farmers_market", "flea_market")) return "market";
+  if (has("park", "natural_feature", "beach", "hiking_area", "national_park", "garden", "botanical_garden", "observation_deck", "scenic_spot")) return "nature";
+  if (has("amusement_park", "zoo", "aquarium", "movie_theater", "performing_arts_theater", "concert_hall", "stadium", "water_park", "spa")) return "experience";
+  if (has("store", "shopping_mall", "clothing_store", "book_store", "department_store", "gift_shop", "shoe_store", "jewelry_store")) return "shop";
+  if (has("tourist_attraction", "church", "place_of_worship", "hindu_temple", "mosque", "synagogue", "historical_landmark", "monument", "cultural_landmark", "city_hall", "castle", "shrine", "buddhist_temple")) return "sight";
+  return "other";
+}
+async function googleSuggest(q, near, token) {
+  const { AutocompleteSuggestion } = await gPlaces();
+  const req = { input: q, sessionToken: token, language: "en" };
+  if (near) req.locationBias = { center: { lat: near.lat, lng: near.lon }, radius: 50000 };
+  const { suggestions } = await AutocompleteSuggestion.fetchAutocompleteSuggestions(req);
+  return (suggestions || []).filter(x => x.placePrediction).map(x => { const p = x.placePrediction;
+    return { name: p.mainText?.text || p.text?.text || "", addr: p.secondaryText?.text || "", city: "", country: "", area: "", type: gType(p.types || []), lat: null, lon: null, pred: p, g: true }; });
+}
+const G_FIELDS = ["id", "displayName", "formattedAddress", "location", "types", "addressComponents", "googleMapsURI"];   // "Place Details Pro" fields only
+function fromGPlace(pl) {
+  const comp = (...t) => { for (const k of t) { const c = (pl.addressComponents || []).find(c => c.types.includes(k)); if (c) return c.longText; } return ""; };
+  const type = gType(pl.types || []), name = pl.displayName || "";
+  return { name, type, city: type === "city" ? name : comp("locality", "postal_town", "administrative_area_level_2", "administrative_area_level_1"), country: comp("country"), area: comp("sublocality_level_1", "neighborhood", "sublocality"),
+    lat: pl.location?.lat(), lon: pl.location?.lng(), addr: pl.formattedAddress || "", full: true, link: pl.googleMapsURI || "", gid: pl.id || "" };
+}
+async function googleDetails(pred) {
+  const pl = pred.toPlace();
+  await pl.fetchFields({ fields: G_FIELDS });   // ends the search session (so the typing is free)
+  return fromGPlace(pl);
+}
+// nearby search: stays and places to eat. Returns items shaped like the OpenStreetMap ones.
+const G_NEAR = ["id", "displayName", "location", "formattedAddress", "types", "primaryType", "primaryTypeDisplayName", "rating", "userRatingCount", "priceLevel", "googleMapsURI", "websiteURI"];
+const STAYG = t => t.includes("hostel") ? "hostel" : t.some(x => ["bed_and_breakfast", "guest_house", "inn"].includes(x)) ? "guest_house" : t.includes("motel") ? "motel" : t.some(x => ["private_guest_room", "cottage", "farmstay"].includes(x)) ? "apartment" : "hotel";
+const PRICE = { INEXPENSIVE: "$", MODERATE: "$$", EXPENSIVE: "$$$", VERY_EXPENSIVE: "$$$$" };
+async function googleNearby(lat, lon, radius, types) {
+  const { Place, SearchNearbyRankPreference } = await gPlaces();
+  const { places } = await Place.searchNearby({ fields: G_NEAR, locationRestriction: { center: { lat, lng: lon }, radius }, includedTypes: types, maxResultCount: 20, rankPreference: SearchNearbyRankPreference.POPULARITY, language: "en" });
+  return (places || []).map(pl => ({ id: "g:" + pl.id, lat: pl.location.lat(), lon: pl.location.lng(), g: true,
+    tags: { name: pl.displayName || "", tourism: STAYG(pl.types || []), cuisine: pl.primaryTypeDisplayName || "", website: pl.websiteURI || "", _addr: pl.formattedAddress || "", _rating: pl.rating || 0, _count: pl.userRatingCount || 0, _price: PRICE[String(pl.priceLevel || "").replace(/^PRICE_LEVEL_/, "")] || "", _maps: pl.googleMapsURI || "", _gid: pl.id, _gtype: gType(pl.types || []) } }));
+}
+const ratingTxt = t => t._rating ? `★ ${t._rating.toFixed(1)}${t._count ? ` (${t._count.toLocaleString("en-US")})` : ""}${t._price ? " · " + t._price : ""}` : "";
+const G_ATTR = `<p class="hint g-attr">Results from Google Maps</p>`;
+// dark style for the Google map
+const G_DARK = [{ elementType: "geometry", stylers: [{ color: "#242f3e" }] }, { elementType: "labels.text.stroke", stylers: [{ color: "#242f3e" }] }, { elementType: "labels.text.fill", stylers: [{ color: "#9aa5b4" }] },
+  { featureType: "poi", elementType: "labels.text.fill", stylers: [{ color: "#b9a07a" }] }, { featureType: "poi.park", elementType: "geometry", stylers: [{ color: "#263c3f" }] },
+  { featureType: "road", elementType: "geometry", stylers: [{ color: "#38414e" }] }, { featureType: "road", elementType: "geometry.stroke", stylers: [{ color: "#212a37" }] }, { featureType: "road.highway", elementType: "geometry", stylers: [{ color: "#746855" }] },
+  { featureType: "transit", elementType: "geometry", stylers: [{ color: "#2f3948" }] }, { featureType: "water", elementType: "geometry", stylers: [{ color: "#17263c" }] }, { featureType: "water", elementType: "labels.text.fill", stylers: [{ color: "#515c6d" }] }];
+const GM_MUTANT = "https://unpkg.com/leaflet.gridlayer.googlemutant@0.16.0/dist/Leaflet.GoogleMutant.js";
+
+// Base map: OpenFreeMap vector tiles (free, no key) drawn with MapLibre, so labels can be shown in English.
+// Falls back to standard OpenStreetMap tiles if that can't load (old device, no WebGL, offline).
+const ML_JS = "https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js", ML_CSS = "https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css", MLL_JS = "https://unpkg.com/@maplibre/maplibre-gl-leaflet@0.1.4/leaflet-maplibre-gl.js";
+const OFM_ATTR = '<a href="https://openfreemap.org" target="_blank" rel="noopener">OpenFreeMap</a> © <a href="https://www.openmaptiles.org/" target="_blank" rel="noopener">OpenMapTiles</a> · <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>';
+let glReady = null, glFailed = false, tileSeq = 0;
+const loadScript = src => new Promise((res, rej) => { const el = document.createElement("script"); el.src = src; el.onload = res; el.onerror = rej; document.head.append(el); });
+const hasWebGL = () => { try { const c = document.createElement("canvas"); return !!(c.getContext("webgl2") || c.getContext("webgl")); } catch { return false; } };
+function loadGL() {
+  return glReady ||= (async () => {
+    if (!hasWebGL()) throw new Error("no webgl");
+    if (!document.querySelector("link[data-ml]")) { const l = document.createElement("link"); l.rel = "stylesheet"; l.href = ML_CSS; l.dataset.ml = "1"; document.head.append(l); }
+    if (!window.maplibregl) await loadScript(ML_JS);
+    if (!L.maplibreGL) await loadScript(MLL_JS);
+  })();
+}
+const styleCache = {};
+const mapLang = () => theme.labels || "en";
+// rewrite every place-name label to English (falling back to the romanized, then local name)
+function labelStyle(st, lang) {
+  if (lang === "local") return st;
+  const en = ["coalesce", ["get", "name:en"], ["get", "name_en"], ["get", "name:latin"], ["get", "name"]];
+  const both = ["case", ["all", ["has", "name"], ["!=", ["get", "name"], en]], ["format", en, {}, "\n", {}, ["get", "name"], { "font-scale": 0.8 }], en];
+  const out = JSON.parse(JSON.stringify(st));
+  for (const ly of out.layers || []) {
+    const tf = ly.layout?.["text-field"]; if (!tf) continue;
+    if (/name/.test(JSON.stringify(tf))) ly.layout["text-field"] = lang === "both" ? both : en;
+  }
+  return out;
+}
+async function setTiles() {
   if (!map) return;
-  const dark = document.documentElement.dataset.theme === "dark";
-  if (tiles) map.removeLayer(tiles);
-  // Standard OpenStreetMap tiles (no key needed); dark mode darkens them in the browser
-  tiles = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' }).addTo(map);
-  map.getContainer().classList.toggle("dark-tiles", dark);
+  const my = ++tileSeq, dark = document.documentElement.dataset.theme === "dark", lang = mapLang();
+  const raster = () => {
+    if (my !== tileSeq || !map) return;
+    if (tiles) map.removeLayer(tiles);
+    map.attributionControl?.removeAttribution(OFM_ATTR);
+    tiles = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' }).addTo(map);
+    map.getContainer().classList.toggle("dark-tiles", dark);
+  };
+  if (useGoogle()) {
+    try {
+      await loadGoogle(); if (!L.gridLayer.googleMutant) await loadScript(GM_MUTANT);
+      if (my !== tileSeq || !map) return;
+      if (tiles) map.removeLayer(tiles);
+      map.attributionControl?.removeAttribution(OFM_ATTR); map.getContainer().classList.remove("dark-tiles");
+      tiles = L.gridLayer.googleMutant({ type: "roadmap", maxZoom: 21, styles: dark ? G_DARK : [] }).addTo(map);
+      return;
+    } catch { if (my !== tileSeq) return; }
+  }
+  if (glFailed) return raster();
+  try {
+    await Promise.race([loadGL(), new Promise((_, rej) => setTimeout(() => rej(new Error("slow")), 9000))]);
+    const name = dark ? "dark" : "liberty";
+    const st = styleCache[name] ||= await fetch("https://tiles.openfreemap.org/styles/" + name).then(r => { if (!r.ok) throw new Error("style"); return r.json(); });
+    if (my !== tileSeq || !map) return;
+    if (tiles) map.removeLayer(tiles);
+    map.attributionControl?.removeAttribution(OFM_ATTR);
+    map.getContainer().classList.remove("dark-tiles");
+    tiles = L.maplibreGL({ style: labelStyle(st, lang), interactive: false, attributionControl: false }).addTo(map);
+    tiles.getAttribution = () => OFM_ATTR; map.attributionControl?.addAttribution(OFM_ATTR);
+  } catch (e) { glFailed = true; glReady = null; raster(); }
 }
 function destroyMap() { if (map) { map.remove(); map = null; tiles = null; layer = null; } lastFitKey = ""; }
 const icon = (html, cls = "", col = "var(--accent)", size = 26) => L.divIcon({ className: "", html: `<div class="mk ${cls}" style="--mc:${col}">${html}</div>`, iconSize: [size, size], iconAnchor: [size / 2, size / 2], popupAnchor: [0, -size / 2] });
