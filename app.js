@@ -522,10 +522,12 @@ function renderTrip(fromData = false) {
   // keep focus and typing intact while data streams in
   const a = document.activeElement, focusId = a && panel.contains(a) && a.id ? a.id : null, sel = focusId && a.selectionStart != null ? [a.selectionStart, a.selectionEnd] : null;
   if (fromData && ((focusId && a.matches("input:not([type=checkbox]):not([type=file]), textarea, select")) || dragging)) { pendingRender = true; return; }
-  $("#crumb").textContent = t.name || ""; $("#backBtn").hidden = false; $("#layoutSeg").hidden = false;
+  $("#crumb").textContent = t.name || ""; $("#backBtn").hidden = false; $("#layoutSeg").hidden = cur.tab === "print";
+  $(".trip")?.classList.toggle("printing", cur.tab === "print");
+  if (cur.tab === "print") { panel.innerHTML = `<div class="view print-view" id="view"></div>`; viewPrint($("#view")); renderSide(); return; }
   const range = validIso(t.start) ? `${fmtD(t.start, { month: "short", day: "numeric" })} – ${fmtD(t.end, { month: "short", day: "numeric", year: "numeric" })}` : "Add dates in Overview";
   panel.innerHTML = `<div class="hero">${t.cover ? `<img src="${esc(t.cover)}" alt="">` : ""}
-      <div class="hero-btns"><button class="btn small" type="button" id="inviteBtn">Share</button></div>
+      <div class="hero-btns"><a class="btn small" href="#/t/${cur.id}/print">Export PDF</a><button class="btn small" type="button" id="inviteBtn">Share</button></div>
       <div class="hero-text"><h1>${esc(t.name || "Untitled trip")}</h1><span class="sub">${esc(range)}${t.dest?.name ? " · " + esc(t.dest.name) : ""} · ${esc(tripWhen(t))}</span><span class="avatars">${members().map(avatar).join("")}</span></div></div>
     <nav class="tabs" aria-label="Trip sections">${TABS.map(([k, l]) => `<a href="#/t/${cur.id}/${k}" ${cur.tab === k ? 'aria-current="page"' : ""}>${l}</a>`).join("")}</nav>
     <div class="view" id="view"></div>`;
@@ -559,6 +561,7 @@ function renderSide() {
     ${item("budget", "Budget")}
     ${item("todo", "To-do", "", todoOpen || "")}
     ${item("packing", "Packing", "", pk.total ? `${pk.done}/${pk.total}` : "")}
+    <a href="#/t/${cur.id}/print" class="side-item side-export ${tab === "print" ? "on" : ""}"><span>Export PDF</span></a>
   </nav>`;
   side.onclick = e => {
     const c = e.target.closest("[data-caret]"); if (c) { e.preventDefault(); sideOpen[c.dataset.caret] = !sideOpen[c.dataset.caret]; renderSide(); return; }
@@ -1363,6 +1366,87 @@ function viewPacking(v) {
   v.addEventListener("submit", e => { const c = e.target.closest(".pack"); if (!c) return; e.preventDefault(); const inp = e.target.querySelector("input"), t = inp.value.trim(); if (!t) return; G(c.dataset.g).items.push({ id: uidGen(), text: t, done: false }); savePack(0); renderTrip(); setTimeout(() => $(`.pack[data-g="${c.dataset.g}"] .pk-add input`)?.focus(), 0); });
   $("#pkGroup").onclick = () => { T.packing.groups.push({ id: uidGen(), name: "New section", items: [] }); savePack(0); renderTrip(); const last = $$(".pack [data-gname]").pop(); last?.focus(); last?.select(); };
   if ($("#pkReset")) $("#pkReset").onclick = () => { T.packing.groups.forEach(g => g.items.forEach(i => i.done = false)); savePack(0); renderTrip(); };
+}
+
+// ================================================================ EXPORT (printable trip book → Save as PDF)
+const PRINT = { itinerary: true, bookings: true, places: true, budget: true, todo: true, notes: true, packing: true, photos: true, sketches: true };
+try { Object.assign(PRINT, JSON.parse(localStorage.getItem("trips-print") || "{}")); } catch {}
+// a small drawn route for one day (no map tiles, so it prints crisply and works offline)
+function routeSketch(items, col) {
+  const pts = items.filter(hasPt); if (pts.length < 2) return "";
+  const W = 220, H = 150, pad = 18;
+  const lat0 = Math.min(...pts.map(p => p.lat)), lat1 = Math.max(...pts.map(p => p.lat)), lon0 = Math.min(...pts.map(p => p.lon)), lon1 = Math.max(...pts.map(p => p.lon));
+  const kx = Math.cos((lat0 + lat1) / 2 * Math.PI / 180), spanX = Math.max(1e-4, (lon1 - lon0) * kx), spanY = Math.max(1e-4, lat1 - lat0), sc = Math.min((W - 2 * pad) / spanX, (H - 2 * pad) / spanY);
+  const ox = (W - spanX * sc) / 2, oy = (H - spanY * sc) / 2;
+  const xy = p => [ox + (p.lon - lon0) * kx * sc, H - (oy + (p.lat - lat0) * sc)];
+  const line = pts.map((p, i) => (i ? "L" : "M") + xy(p).map(v => v.toFixed(1)).join(" ")).join(" ");
+  const nums = items.map((p, i) => hasPt(p) ? (() => { const [x, y] = xy(p); return `<circle cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="9" fill="${col}" stroke="#fff" stroke-width="2"/><text x="${x.toFixed(1)}" y="${(y + 3.5).toFixed(1)}" text-anchor="middle" font-size="9" font-weight="700" fill="#fff" font-family="Arial">${i + 1}</text>`; })() : "").join("");
+  const kmTot = pts.reduce((a, p, i) => i ? a + km(pts[i - 1], p) : 0, 0);
+  return `<figure class="sketch"><svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" role="img" aria-label="Route sketch"><rect width="${W}" height="${H}" rx="8" fill="#F3F6F7"/><path d="${line}" fill="none" stroke="${col}" stroke-width="2.2" stroke-dasharray="5 4"/>${nums}</svg><figcaption>${kmTot.toFixed(1)} km route · not to scale with streets</figcaption></figure>`;
+}
+function bookingLine(b) {
+  const k = KINDS[b.kind] || KINDS.other, g = k.group;
+  if (g === "transport" || g === "car") return `${fmtD(b.depDate, { weekday: "short", month: "short", day: "numeric" }) || "—"} ${esc(b.depTime || "")} ${esc(b.from || "")} → ${fmtD(b.arrDate, { weekday: "short", month: "short", day: "numeric" }) || ""} ${esc(b.arrTime || "")} ${esc(b.to || "")}`;
+  if (g === "lodging") return `${fmtD(b.checkIn, { weekday: "short", month: "short", day: "numeric" }) || "—"} → ${fmtD(b.checkOut, { weekday: "short", month: "short", day: "numeric" }) || "—"}${validIso(b.checkIn) && validIso(b.checkOut) ? ` · ${daysBetween(b.checkIn, b.checkOut)} nights` : ""}`;
+  return `${fmtD(b.date, { weekday: "short", month: "short", day: "numeric" }) || "—"}${b.time ? " · " + esc(b.time) : ""}`;
+}
+function printHtml() {
+  const t = T.trip, days = tripDays(), all = placeList(), O = PRINT;
+  const img = src => O.photos && src ? `<img src="${esc(src)}" alt="">` : "";
+  const range = validIso(t.start) ? `${fmtD(t.start, { weekday: "long", month: "long", day: "numeric" })} – ${fmtD(t.end, { weekday: "long", month: "long", day: "numeric", year: "numeric" })}` : "";
+  const items = spendItems(), real = items.filter(x => !x.planned && x.kind !== "payment"), plan = items.filter(x => x.planned);
+  const spent = real.reduce((a, x) => a + x.amount, 0), planned = plan.reduce((a, x) => a + x.amount, 0), budget = num(t.budget);
+  const bkAll = Object.values(T.bookings).sort((a, b) => bkStart(a).localeCompare(bkStart(b)));
+  let h = `<section class="pb-cover">${O.photos && t.cover ? `<div class="pb-cover-img"><img src="${esc(t.cover)}" alt=""></div>` : ""}
+    <h1>${esc(t.name || "Trip")}</h1><p class="pb-sub">${esc(range)}${t.dest?.name ? " · " + esc(t.dest.name) : ""}</p>
+    <p class="pb-sub">${members().map(e => esc(nameOf(e))).join(", ")}</p>
+    <div class="pb-stats"><div><b>${days.length}</b><span>days</span></div><div><b>${all.filter(p => days.includes(p.day)).length}</b><span>places planned</span></div><div><b>${bkAll.length}</b><span>bookings</span></div><div><b>${money(spent + planned)}</b><span>${budget ? "of " + money(budget) + " budget" : "spent + planned"}</span></div></div>
+    ${bkAll.filter(b => (KINDS[b.kind] || KINDS.other).group === "transport").length ? `<h3>Getting there and around</h3><table class="pb-tbl"><tbody>${bkAll.filter(b => (KINDS[b.kind] || KINDS.other).group === "transport").map(b => `<tr><td><b>${esc((KINDS[b.kind] || KINDS.other).label)}</b>${b.num ? " " + esc(b.num) : ""}</td><td>${bookingLine(b)}</td><td>${b.conf ? `Conf. <b>${esc(b.conf)}</b>` : ""}</td></tr>`).join("")}</tbody></table>` : ""}
+    <p class="pb-foot">Exported ${esc(new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }))} from Trips</p></section>`;
+  if (O.itinerary && days.length) {
+    h += `<section class="pb-sec pb-big"><h2>Itinerary</h2>`;
+    days.forEach((iso, i) => {
+      const ps = dayPlaces(iso), bk = bookingsOn(iso), stay = stayFor(iso), mode = dayMode(iso), notes = T.days[iso]?.notes || "", col = getComputedStyle(document.documentElement).getPropertyValue(DAYCOLS[i % DAYCOLS.length]).trim() || "#D9483B";
+      const legs = ps.map((p, k) => k && hasPt(ps[k - 1]) && hasPt(p) ? legText(km(ps[k - 1], p), mode) : "");
+      h += `<article class="pb-day"><header style="border-color:${col}"><span class="pb-dn" style="background:${col}">${i + 1}</span><div><h3>${esc(fmtD(iso, { weekday: "long", month: "long", day: "numeric" }))}</h3><span>${ps.length ? ps.length + " place" + (ps.length === 1 ? "" : "s") + " · " + MODES[mode].label : bk.some(x => (KINDS[x.b.kind] || KINDS.other).group === "transport") ? "Travel day" : "Free day"}${stay ? " · staying at " + esc(stay[1].title || "") : ""}</span></div></header>
+        ${!ps.length && !bk.length && !notes ? "" : `<div class="pb-day-body"><div class="pb-day-main">
+          ${bk.map(x => `<p class="pb-bk">${x.txt}${x.b.conf ? ` · conf. <b>${esc(x.b.conf)}</b>` : ""}</p>`).join("")}
+          ${ps.length ? `<ol class="pb-stops">${ps.map((p, k) => `${legs[k] ? `<li class="pb-leg">${esc(legs[k])}</li>` : ""}<li class="pb-stop"><span class="pb-num" style="background:${col}">${k + 1}</span>${O.photos && photoSrcOf(p) ? `<span class="pb-thumb">${img(photoSrcOf(p))}</span>` : ""}<div><b>${esc(p.name)}</b>${p.time ? ` <span class="pb-time">${esc(p.time)}</span>` : ""}<br><span class="pb-meta">${esc(TYPE[p.type].label)}${p.city && p.city !== p.name ? " · " + esc(p.city) : ""}${hasPt(p) ? ` · <a href="${esc(gmapsUrl(p))}">map</a>` : ""}</span>${p.notes ? `<br><span class="pb-note">${esc(p.notes)}</span>` : ""}</div></li>`).join("")}</ol>` : ""}
+          ${notes ? `<p class="pb-notes">${esc(notes).replace(/\n/g, "<br>")}</p>` : ""}
+        </div>${O.sketches ? routeSketch(ps, col) : ""}</div>`}</article>`;
+    });
+    h += `</section>`;
+  }
+  if (O.bookings && bkAll.length) {
+    h += `<section class="pb-sec pb-big"><h2>Bookings</h2><table class="pb-tbl"><thead><tr><th>What</th><th>When</th><th>Details</th><th>Confirmation</th><th class="r">Cost</th></tr></thead><tbody>
+      ${bkAll.map(b => { const k = KINDS[b.kind] || KINDS.other, via = (b.stops || []).filter(x => (x.at || "").trim()); return `<tr><td><b>${esc(b.title || k.label)}</b><br><span class="pb-meta">${esc(k.label)}${b.num ? " · " + esc(b.num) : ""}</span></td><td>${bookingLine(b)}</td><td>${via.length ? "via " + via.map(x => esc(x.at) + (parseDur(x.dur) ? " (" + fmtMin(parseDur(x.dur)) + ")" : "")).join(", ") : ""}${b.seats ? " Seats " + esc(b.seats) : ""}${b.addr ? esc(b.addr) : ""}${b.notes ? `<br><span class="pb-note">${esc(b.notes)}</span>` : ""}</td><td><b>${esc(b.conf || "")}</b></td><td class="r">${num(b.cost) ? ((b.costCur || homeCur()) === homeCur() ? money(num(b.cost)) : fmtCur(num(b.cost), b.costCur)) : ""}</td></tr>`; }).join("")}</tbody></table></section>`;
+  }
+  const unsched = all.filter(p => !days.includes(p.day));
+  if (O.places && unsched.length) {
+    h += `<section class="pb-sec"><h2>Places not scheduled yet</h2><div class="pb-places">${unsched.sort((a, b) => (a.city || "").localeCompare(b.city || "") || a.name.localeCompare(b.name)).map(p => `<div class="pb-place">${O.photos && photoSrcOf(p) ? `<span class="pb-thumb">${img(photoSrcOf(p))}</span>` : ""}<div><b>${esc(p.name)}</b><br><span class="pb-meta">${esc(TYPE[p.type].label)}${p.city && p.city !== p.name ? " · " + esc(p.city) : ""}${hasPt(p) ? ` · <a href="${esc(gmapsUrl(p))}">map</a>` : ""}</span>${p.notes ? `<br><span class="pb-note">${esc(p.notes)}</span>` : ""}</div></div>`).join("")}</div></section>`;
+  }
+  if (O.budget && items.length) {
+    const { transfers } = balances();
+    h += `<section class="pb-sec pb-big"><h2>Budget</h2><div class="pb-stats"><div><b>${budget ? money(budget) : "—"}</b><span>budget</span></div><div><b>${money(spent)}</b><span>spent</span></div><div><b>${money(planned)}</b><span>still planned</span></div><div><b>${budget ? money(budget - spent - planned) : "—"}</b><span>left</span></div></div>
+      ${transfers.length ? `<h3>Who owes whom</h3><ul class="pb-list">${transfers.map(x => `<li>${esc(nameOf(x.from))} owes ${esc(nameOf(x.to))} <b>${money(x.amt, { cents: true })}</b></li>`).join("")}</ul>` : ""}
+      <h3>All costs (in ${esc(homeCur())})</h3><table class="pb-tbl"><thead><tr><th>Date</th><th>What</th><th>Paid by</th><th class="r">Amount</th></tr></thead><tbody>
+      ${items.map(x => `<tr><td>${esc(fmtD(x.date) || "—")}</td><td>${x.kind === "payment" ? `${esc(nameOf(x.paidBy))} paid ${esc(nameOf(x.to))}` : esc(x.desc || "")}${x.planned ? " <span class='pb-meta'>(estimate)</span>" : ""}</td><td>${x.paidBy ? esc(nameOf(x.paidBy)) : ""}</td><td class="r">${x.cur !== homeCur() ? `<span class="pb-meta">${fmtCur(x.orig, x.cur, true)}</span> ` : ""}${x.noRate ? "—" : money(x.amount, { cents: true })}</td></tr>`).join("")}</tbody></table></section>`;
+  }
+  const todos = Object.values(T.checklist).sort((a, b) => (a.done ? 1 : 0) - (b.done ? 1 : 0) || (a.order || 0) - (b.order || 0));
+  if (O.todo && todos.length) h += `<section class="pb-sec"><h2>To-do</h2><ul class="pb-checks">${todos.map(c => `<li class="${c.done ? "done" : ""}"><span class="box">${c.done ? "✓" : ""}</span>${esc(c.text || "")}${c.who ? ` <span class="pb-meta">· ${esc(nameOf(c.who))}</span>` : ""}${c.due ? ` <span class="pb-meta">· by ${esc(fmtD(c.due))}</span>` : ""}</li>`).join("")}</ul></section>`;
+  const notes = Object.values(T.notes).filter(n => (n.title || n.body || "").trim());
+  if (O.notes && (t.notes || notes.length)) h += `<section class="pb-sec"><h2>Notes</h2>${t.notes ? `<div class="pb-notebox"><h3>Trip notes</h3><p>${esc(t.notes).replace(/\n/g, "<br>")}</p></div>` : ""}${notes.map(n => `<div class="pb-notebox"><h3>${esc(n.title || "Note")}</h3><p>${esc(n.body || "").replace(/\n/g, "<br>")}</p></div>`).join("")}</section>`;
+  if (O.packing && T.packing?.groups?.length) h += `<section class="pb-sec"><h2>${esc(ME.name)}'s packing list</h2><div class="pb-pack">${T.packing.groups.map(g => `<div><h3>${esc(g.name)}</h3><ul class="pb-checks">${g.items.map(i => `<li class="${i.done ? "done" : ""}"><span class="box">${i.done ? "✓" : ""}</span>${esc(i.text)}</li>`).join("")}</ul></div>`).join("")}</div></section>`;
+  return h;
+}
+function viewPrint(v) {
+  const opts = [["itinerary", "Itinerary"], ["sketches", "Route sketches"], ["bookings", "Bookings"], ["places", "Unscheduled places"], ["budget", "Budget"], ["todo", "To-do"], ["notes", "Notes"], ["packing", "My packing list"], ["photos", "Photos"]];
+  v.innerHTML = `<div class="print-bar no-print"><div class="row between"><div><h2>Export PDF</h2><p class="hint">Pick what to include, then <b>Save as PDF</b>. In the print window choose <b>Save as PDF</b> as the printer (on iPhone: Share → Print, then Share again → Save to Files).</p></div>
+      <div class="row"><a class="btn ghost" href="#/t/${cur.id}/plan">Back</a><button class="btn accent" type="button" id="doPrint">Save as PDF</button></div></div>
+      <div class="chips">${opts.map(([k, l]) => `<label class="chip ${PRINT[k] ? "on" : ""}"><input type="checkbox" data-po="${k}" ${PRINT[k] ? "checked" : ""} hidden>${l}</label>`).join("")}</div></div>
+    <div class="pb" id="pb">${printHtml()}</div>`;
+  v.querySelectorAll("[data-po]").forEach(c => c.onchange = () => { PRINT[c.dataset.po] = c.checked; try { localStorage.setItem("trips-print", JSON.stringify(PRINT)); } catch {} renderTrip(); });
+  $("#doPrint").onclick = () => { const old = document.title; document.title = (T.trip.name || "Trip") + " – trip book"; window.print(); setTimeout(() => { document.title = old; }, 1000); };
 }
 
 // ================================================================ NOTES
