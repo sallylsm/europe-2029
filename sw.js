@@ -1,7 +1,7 @@
 // Offline support for Trips: keeps the app, its fonts, the map library and Firebase code on the device.
 // Bump VERSION when you upload new files so phones pick up the change.
-const VERSION = "trips-v13";
-const SHELL = ["./", "index.html", "app.js", "style.css", "manifest.webmanifest", "icon.svg", "icon-192.png", "icon-512.png", "config.js", "airports.json"];
+const VERSION = "trips-v14";
+const SHELL = ["./", "index.html", "app.js", "style.css", "manifest.webmanifest", "icon.svg", "icon-192.png", "icon-512.png", "logo.png", "config.js", "airports.json"];
 self.addEventListener("install", e => { e.waitUntil(caches.open(VERSION).then(c => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener("activate", e => {
   e.waitUntil(caches.keys().then(keys => Promise.all(keys.filter(k => k.startsWith("trips-") && k !== VERSION).map(k => caches.delete(k)))).then(() => self.clients.claim()));
