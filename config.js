@@ -16,3 +16,4 @@ export const allowedEmails = [
 
 export const unsplashKey = "8Qwf6kPDtQNszPWkoG3Q385rwpOk62xTxlj5LD3K-6U";
 export const flightStatusKey = "1ee55650f8msh8cd77e43e99f0d8p13fe51jsnb5834d874a64";
+export const googleMapsKey = "AIzaSyDAlpAfJf6bie4HPC7HKu25P9NTFDjiZuA"
