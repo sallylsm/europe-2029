@@ -47,6 +47,16 @@ const MODES = {
   drive: { label: "Driving", verb: "drive", g: "driving", mins: d => d * 1.35 / 32 * 60 + 4 },
   bike: { label: "Biking", verb: "bike", g: "bicycling", mins: d => d * 1.2 / 14 * 60 },
 };
+const MODE_IC = { walk: "🚶", transit: "🚆", drive: "🚗", bike: "🚲" };
+// a day can be "auto": walk the short hops, transit for the rest
+const AUTO_KM = 1.2;
+const DAY_MODES = [...Object.entries(MODES).map(([k, m]) => [k, m.label]), ["auto", "Walk when close, transit otherwise"]];
+// how you get to this stop: its own choice, else the day's
+function legModeOf(iso, p, d) {
+  if (p?.leg && MODES[p.leg]) return p.leg;
+  const m = dayMode(iso); return m === "auto" ? (d <= AUTO_KM ? "walk" : "transit") : (MODES[m] ? m : "walk");
+}
+const routeMode = iso => { const m = dayMode(iso); return m === "auto" ? "transit" : (MODES[m] ? m : "walk"); };
 function legMins(d, mode) { return Math.max(1, Math.round((MODES[mode] || MODES.walk).mins(d))); }
 function legText(d, mode = "walk") {
   if (d < 0.05) return "Right next door";
@@ -818,22 +828,23 @@ function wirePP(v) {
 function dayHtml(iso, i) {
   const items = dayPlaces(iso), bk = bookingsOn(iso), stay = stayFor(iso), notes = T.days[iso]?.notes || "", photos = Object.entries(T.photos).filter(([, p]) => p.day === iso);
   const focus = mapFocus === iso, mode = dayMode(iso);
-  let total = 0, mins = 0; const legs = [];
-  for (let k = 1; k < items.length; k++) if (hasPt(items[k - 1]) && hasPt(items[k])) { const d = km(items[k - 1], items[k]); total += d; mins += d > 0.05 ? legMins(d, mode) : 0; legs[k] = d; }
+  let total = 0, mins = 0; const legs = [], lm = [];
+  for (let k = 1; k < items.length; k++) if (hasPt(items[k - 1]) && hasPt(items[k])) { const d = km(items[k - 1], items[k]), md = legModeOf(iso, items[k], d); total += d; mins += d > 0.05 ? legMins(d, md) : 0; legs[k] = d; lm[k] = md; }
+  const used = [...new Set(lm.filter(Boolean))], how = used.length === 1 ? " " + MODES[used[0]].verb : used.length > 1 ? " (" + used.map(u => MODES[u].label.toLowerCase()).join(" + ") + ")" : "";
   const pts = items.filter(hasPt);
   const travelDay = !items.length && bk.some(x => (KINDS[x.b.kind] || KINDS.other).group === "transport");
   return `<section class="day ${focus ? "focus" : ""}" id="day-${iso}" data-day="${iso}" style="--dc:${dayColor(iso, i)}">
     <div class="day-head" data-focus="${iso}" role="button" tabindex="0" aria-pressed="${focus}" aria-label="Show only ${esc(dayLabel(iso))} on the map">
       <button class="day-dot" type="button" data-dcolor="${iso}" aria-expanded="${openColor === iso}" aria-label="Change the color of ${esc(dayLabel(iso))}" title="Change this day's color"></button><div class="grow"><h2>${esc(fmtD(iso, { weekday: "long", month: "long", day: "numeric" }))}</h2>
-      <span class="meta">Day ${i + 1}${travelDay ? " · Travel day" : ""}${items.length ? ` · ${items.length} place${items.length === 1 ? "" : "s"}` : ""}${total ? ` · ${total.toFixed(1)} km · about ${fmtMin(mins)} ${MODES[mode].verb}` : ""}</span></div>
+      <span class="meta">Day ${i + 1}${travelDay ? " · Travel day" : ""}${items.length ? ` · ${items.length} place${items.length === 1 ? "" : "s"}` : ""}${total ? ` · ${total.toFixed(1)} km · about ${fmtMin(mins)}${how}` : ""}</span></div>
       ${focus ? `<span class="pill accent">Only this day on map</span>` : ""}</div>
     <div class="day-body">
       ${openColor === iso ? `<div class="day-colors" role="group" aria-label="Day color">${DAYPAL.map(([hx, nm]) => `<button type="button" data-setcol="${iso}" data-c="${hx}" style="--sw:${hx}" aria-pressed="${T.days[iso]?.color === hx}" title="${nm}" aria-label="${nm}"></button>`).join("")}<button type="button" class="linkbtn" data-setcol="${iso}" data-c="">Default</button></div>` : ""}
       ${bk.map(x => `<div class="bk-mini">${x.txt}</div>`).join("")}
       <textarea class="day-notes" id="dn-${iso}" data-notes="${iso}" placeholder="Notes for the day…" rows="${Math.min(8, Math.max(1, notes.split("\n").length))}">${esc(notes)}</textarea>
-      ${items.length > 1 ? `<label class="mode-pick">Getting around <select id="md-${iso}" data-mode="${iso}" aria-label="How you'll get around on ${esc(dayLabel(iso))}">${Object.entries(MODES).map(([k, m]) => `<option value="${k}" ${k === mode ? "selected" : ""}>${m.label}</option>`).join("")}</select></label>` : ""}
+      ${items.length > 1 ? `<label class="mode-pick">Getting around <select id="md-${iso}" data-mode="${iso}" aria-label="How you'll get around on ${esc(dayLabel(iso))}">${DAY_MODES.map(([k, l]) => `<option value="${k}" ${k === mode ? "selected" : ""}>${l}</option>`).join("")}</select><span class="hint">Change any stretch below</span></label>` : ""}
       <ol class="stops" data-drop="${iso}">${dayItems(iso).map(x => x.k === "n" ? noteHtml(iso, x) : (() => { const p = x, k = items.findIndex(y => y.id === p.id); return `<li class="stop-wrap" data-id="${p.id}">
-          ${k && legs[k] != null ? `<div class="leg" aria-hidden="true">${esc(legText(legs[k], mode))}</div>` : ""}
+          ${k && legs[k] != null ? `<div class="leg"><label class="leg-pick ${p.leg ? "set" : ""}" title="How you'll get to ${esc(p.name)}"><span aria-hidden="true">${MODE_IC[lm[k]]}</span><select data-leg="${p.id}" aria-label="How to get to ${esc(p.name)}"><option value="">${p.leg ? "Same as the day" : "Same as the day (" + esc(MODES[lm[k]].label.toLowerCase()) + ")"}</option>${Object.entries(MODES).map(([mk, m]) => `<option value="${mk}" ${p.leg === mk ? "selected" : ""}>${m.label}</option>`).join("")}</select></label><span>${esc(legText(legs[k], lm[k]))}</span></div>` : ""}
           <div class="stop" style="--tc:${TYPE[p.type].col}">
             <span class="grip" aria-hidden="true">⋮⋮</span><span class="num">${k + 1}</span>
             <span class="thumb">${photoSrcOf(p) ? `<img src="${esc(photoSrcOf(p))}" alt="" loading="lazy" draggable="false" onerror="this.remove()">` : esc(p.name.charAt(0))}</span>
@@ -870,15 +881,18 @@ function appleDirUrl(pts, mode = "walk") {
   return `https://maps.apple.com/directions?source=${ll(pts[0])}&destination=${ll(pts[pts.length - 1])}${pts.slice(1, -1).map(p => "&waypoint=" + ll(p)).join("")}&mode=${APPLE_MODE[mode] || "walking"}`;
 }
 function directionsModal(iso) {
-  const pts = dayPlaces(iso).filter(hasPt), mode = dayMode(iso);
+  const pts = dayPlaces(iso).filter(hasPt);
+  const stretches = pts.slice(1).map((p, k) => { const d = km(pts[k], p); return { a: pts[k], b: p, d, m: legModeOf(iso, p, d) }; });
+  const mixed = new Set(stretches.map(x => x.m)).size > 1, mode = !mixed && stretches.length ? stretches[0].m : routeMode(iso);
   let pref = ""; try { pref = localStorage.getItem("trips-maps") || ""; } catch {}
   const many = pts.length > 11;
   openModal(`<div class="row between"><h2>Directions</h2><button class="iconbtn" type="button" data-close aria-label="Close">×</button></div>
-    <p class="hint">${esc(dayLabel(iso))} · ${pts.length} stops · ${esc(MODES[mode].label.toLowerCase())}. Which maps app?</p>
+    <p class="hint">${esc(dayLabel(iso))} · ${pts.length} stops${mixed ? "" : " · " + esc(MODES[mode].label.toLowerCase())}. Which maps app?</p>${mixed ? `<p class="hint">The whole-day route uses ${esc(MODES[mode].label.toLowerCase())}, since a maps app can only take one way of getting around per route.</p>` : ""}
     <div class="maps-pick">
       <a class="maps-btn" href="${esc(appleDirUrl(pts, mode))}" target="_blank" rel="noopener" data-app="apple"><b>Apple Maps</b><span>Best on iPhone, iPad and Mac</span></a>
       <a class="maps-btn" href="${esc(dirUrl(pts, mode))}" target="_blank" rel="noopener" data-app="google"><b>Google Maps</b><span>Works everywhere${many ? " · first 10 stops" : ""}</span></a>
     </div>
+    ${mixed ? `<div class="field"><span>Or one stretch at a time, each in its own way of getting around</span><ol class="dir-legs">${stretches.map(x => `<li><span>${MODE_IC[x.m]} <b>${esc(x.a.name)}</b> → <b>${esc(x.b.name)}</b> <span class="hint" style="display:inline">${esc(legText(x.d, x.m))}</span></span><span class="dir-links"><a class="ext" href="${esc(appleDirUrl([x.a, x.b], x.m))}" target="_blank" rel="noopener">Apple ↗</a><a class="ext" href="${esc(dirUrl([x.a, x.b], x.m))}" target="_blank" rel="noopener">Google ↗</a></span></li>`).join("")}</ol></div>` : ""}
     <label class="row" style="gap:8px"><input type="checkbox" id="dmRemember" ${pref ? "checked" : ""}> Remember my choice on this device</label>
     <p class="hint">Apple Maps needs iOS 18.4 or macOS 15.4 or later for routes with several stops.</p>`, m => {
     $$("[data-close]", m).forEach(x => x.onclick = closeModal);
@@ -993,6 +1007,7 @@ function wirePlan(v) {
   });
   v.addEventListener("change", e => {
     if (e.target.dataset.ctime) { const [iso, id] = e.target.dataset.ctime.split("|"); T.days[iso] = { ...T.days[iso], cards: dayCards(iso).map(c => c.id === id ? { ...c, time: e.target.value } : c) }; saveDay(iso, 300); }
+    if (e.target.dataset.leg) { const id = e.target.dataset.leg; T.places[id] = { ...T.places[id], leg: e.target.value }; savePlace(id); e.target.blur(); renderTrip(); return; }
     if (e.target.dataset.time) { const id = e.target.dataset.time; T.places[id] = { ...T.places[id], time: e.target.value }; savePlace(id, 300); }
     if (e.target.dataset.mode) { const iso = e.target.dataset.mode; T.days[iso] = { ...(T.days[iso] || {}), mode: e.target.value }; save(tp("days/" + iso), T.days[iso], 0); e.target.blur(); renderTrip(); }
   });
@@ -1907,7 +1922,7 @@ const HELP = [
     <li><b>Optimize route</b>: the planner works out the shortest order for the day's stops. You can start and end the day at your hotel. It measures straight-line distance, and you can undo it.</li>
     <li><b>Directions</b> opens the day in Apple Maps or Google Maps, your choice, and it can remember which one you like.</li>
     <li><b>Day colors</b>: tap the colored dot next to a day's date and pick from 18 colors. The map uses the same color.</li>
-    <li><b>Getting around</b>: set walking, transit, driving or biking per day for travel-time estimates.</li>
+    <li><b>Getting around</b>: pick walking, transit, driving or biking for the day, or <i>Walk when close, transit otherwise</i>. To change one stretch, tap the little icon (🚶 🚆 🚗 🚲) between two stops. Travel times and Directions follow your choices.</li>
     <li><b>Ideas nearby</b> suggests well-known sights close to that day's places.</li></ul>`],
   ["bookings", "Bookings and flights", `<p>Add flights, trains, stays, rental cars and reservations with times and confirmation numbers. They appear on the right days in the itinerary.</p>
     <ul><li><b>Layovers</b>: add each stop in a flight. <b>Route map</b> on a flight draws the whole travel day with dashed lines through every layover. Tapping a travel day on the map shows the same thing.</li>
@@ -2207,9 +2222,9 @@ function printHtml() {
   if (O.itinerary && days.length) {
     h += `<section class="pb-sec pb-big"><h2>Itinerary</h2>`;
     days.forEach((iso, i) => {
-      const ps = dayPlaces(iso), bk = bookingsOn(iso), stay = stayFor(iso), mode = dayMode(iso), notes = T.days[iso]?.notes || "", col = colVal(dayColor(iso, i));
-      const legs = ps.map((p, k) => k && hasPt(ps[k - 1]) && hasPt(p) ? legText(km(ps[k - 1], p), mode) : "");
-      h += `<article class="pb-day"><header style="border-color:${col}"><span class="pb-dn" style="background:${col}">${i + 1}</span><div><h3>${esc(fmtD(iso, { weekday: "long", month: "long", day: "numeric" }))}</h3><span>${ps.length ? ps.length + " place" + (ps.length === 1 ? "" : "s") + " · " + MODES[mode].label : bk.some(x => (KINDS[x.b.kind] || KINDS.other).group === "transport") ? "Travel day" : "Free day"}${stay ? " · staying at " + esc(stay[1].title || "") : ""}</span></div></header>
+      const ps = dayPlaces(iso), bk = bookingsOn(iso), stay = stayFor(iso), mode = routeMode(iso), notes = T.days[iso]?.notes || "", col = colVal(dayColor(iso, i));
+      const legs = ps.map((p, k) => { if (!k || !hasPt(ps[k - 1]) || !hasPt(p)) return ""; const d = km(ps[k - 1], p), md = legModeOf(iso, p, d); return MODE_IC[md] + " " + legText(d, md); });
+      h += `<article class="pb-day"><header style="border-color:${col}"><span class="pb-dn" style="background:${col}">${i + 1}</span><div><h3>${esc(fmtD(iso, { weekday: "long", month: "long", day: "numeric" }))}</h3><span>${ps.length ? ps.length + " place" + (ps.length === 1 ? "" : "s") + " · " + (dayMode(iso) === "auto" ? "walking and transit" : MODES[mode].label) : bk.some(x => (KINDS[x.b.kind] || KINDS.other).group === "transport") ? "Travel day" : "Free day"}${stay ? " · staying at " + esc(stay[1].title || "") : ""}</span></div></header>
         ${!ps.length && !bk.length && !notes && !dayCards(iso).some(c => c.text) ? "" : `<div class="pb-day-body"><div class="pb-day-main">
           ${bk.map(x => `<p class="pb-bk">${x.txt}${x.b.conf ? ` · conf. <b>${esc(x.b.conf)}</b>` : ""}</p>`).join("")}
           ${ps.length || dayCards(iso).some(c => c.text) ? `<ol class="pb-stops">${dayItems(iso).map(x => { if (x.k === "n") return x.text ? `<li class="pb-cnote">${x.time ? `<b>${esc(x.time)}</b> ` : ""}${esc(x.text).replace(/\n/g, "<br>")}</li>` : ""; const p = x, k = ps.findIndex(y => y.id === p.id); return `${legs[k] ? `<li class="pb-leg">${esc(legs[k])}</li>` : ""}<li class="pb-stop"><span class="pb-num" style="background:${col}">${k + 1}</span>${O.photos && photoSrcOf(p) ? `<span class="pb-thumb">${img(photoSrcOf(p))}</span>` : ""}<div><b>${esc(p.name)}</b>${p.time ? ` <span class="pb-time">${esc(p.time)}</span>` : ""}<br><span class="pb-meta">${esc(TYPE[p.type].label)}${p.city && p.city !== p.name ? " · " + esc(p.city) : ""}${hasPt(p) ? ` · <a href="${esc(gmapsUrl(p))}">map</a>` : ""}</span>${p.notes ? `<br><span class="pb-note">${esc(p.notes)}</span>` : ""}</div></li>`; }).join("")}</ol>` : ""}
@@ -2296,7 +2311,7 @@ function viewOverview(v) {
       <div class="grid2"><label class="field" for="ovStart">Start<input id="ovStart" type="date" value="${esc(t.start || "")}"></label><label class="field" for="ovEnd">End<input id="ovEnd" type="date" value="${esc(t.end || "")}"></label></div>
       <div class="grid2"><label class="field" for="ovBudget">Total budget<input id="ovBudget" type="number" min="0" step="50" value="${num(t.budget) || ""}" placeholder="0" data-live></label>
         <label class="field" for="ovCur">Home currency (totals are shown in)<select id="ovCur">${CURRENCIES.map(c => `<option ${c === (t.currency || "USD") ? "selected" : ""}>${c}</option>`).join("")}</select></label></div>
-      <label class="field" for="ovMode">Usually getting around by<select id="ovMode">${Object.entries(MODES).map(([k, m]) => `<option value="${k}" ${k === (t.mode || "walk") ? "selected" : ""}>${m.label}</option>`).join("")}</select></label>
+      <label class="field" for="ovMode">Usually getting around by<select id="ovMode">${DAY_MODES.map(([k, l]) => `<option value="${k}" ${k === (t.mode || "walk") ? "selected" : ""}>${l}</option>`).join("")}</select></label>
       <div class="row"><button class="btn ghost small" type="button" id="ovCover">New cover photo</button><label class="btn ghost small file-btn">Upload cover<input type="file" id="ovCoverFile" accept="image/*"></label>${t.coverCredit ? `<span class="hint">${esc(t.coverCredit)}</span>` : ""}</div></div>
     <div class="card" style="display:grid;gap:10px"><div class="row between"><h3>People</h3><button class="btn ghost small" type="button" id="ovInvite">Share & invite</button></div>
       ${members().map(e => `<div class="bal">${avatar(e)}<span><b>${esc(nameOf(e))}</b> <span class="hint" style="display:inline">${esc(e)}</span></span><span class="hint">${t.ownerEmail === e ? "Planner" : ""}</span></div>`).join("")}</div>
