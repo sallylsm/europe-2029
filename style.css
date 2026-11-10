@@ -273,6 +273,7 @@ input[type="checkbox"] { width: 17px; height: 17px; accent-color: var(--leaf); c
 .mk.hl { transform: scale(1.35); }
 .mk.home { border-radius: 7px; }
 .leaflet-container { font: 13px var(--f-body); background: var(--paper); }
+.dark-tiles .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.92) contrast(.88) saturate(.55); }
 .leaflet-popup-content { margin: 10px 12px; }
 .leaflet-popup-content b { font-size: 14px; }
 .map-legend { position: absolute; left: 10px; bottom: 22px; z-index: 500; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 6px 10px; font-size: 12px; display: flex; gap: 10px; flex-wrap: wrap; max-width: calc(100% - 80px); box-shadow: 0 2px 8px rgba(0,0,0,.12); }
