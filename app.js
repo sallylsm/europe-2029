@@ -1,4 +1,4 @@
-// Trips — a shared trip planner (GitHub Pages + Firebase). Many trips, invite people per trip.
+// Wayfinder — a shared trip planner (GitHub Pages + Firebase). Many trips, invite people per trip.
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js";
 import { getAuth, GoogleAuthProvider, onAuthStateChanged, signInWithPopup, signInWithRedirect, signOut, reauthenticateWithPopup } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-auth.js";
 import { initializeFirestore, persistentLocalCache, persistentMultipleTabManager, doc, collection, setDoc, updateDoc, deleteDoc, getDoc, getDocs, onSnapshot, query, where, writeBatch, deleteField } from "https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js";
@@ -472,7 +472,7 @@ function attachSuggest(input, list, opts) {
     const local = opts.local ? opts.local(q) : [];
     const pasted = parsePasted(q);
     if (pasted) {
-      if (pasted.short) { show(`<li class="note">That's a short share link, which Trips can't open. In Google Maps, press and hold the spot and copy the coordinates (like 35.6702, 139.7027), or open the link in a browser and copy the full address from the address bar.</li>`); return; }
+      if (pasted.short) { show(`<li class="note">That's a short share link, which Wayfinder can't open. In Google Maps, press and hold the spot and copy the coordinates (like 35.6702, 139.7027), or open the link in a browser and copy the full address from the address bar.</li>`); return; }
       if (pasted.bad) { show(`<li class="note">Couldn't find a location in that link. Try copying the coordinates from Google Maps instead.</li>`); return; }
       const my = ++seq; show(`<li class="note">Finding that spot…</li>`);
       resolvePasted(pasted, opts.near ? opts.near() : null).then(res => { if (my !== seq) return; items = res; active = items.length ? 0 : -1; items.length ? paint() : show(`<li class="note">Nothing found there.</li>`); }).catch(() => { if (my === seq) show(`<li class="note">Search isn't responding right now.</li>`); });
@@ -524,7 +524,7 @@ const closeModal = () => { $("#modalRoot").innerHTML = ""; };
 const provider = new GoogleAuthProvider(); provider.setCustomParameters({ prompt: "select_account" });
 function renderGate(msg) {
   $("#crumb").textContent = ""; $("#meBtn").hidden = true; $("#backBtn").hidden = true; $("#layoutSeg").hidden = true;
-  $("#app").innerHTML = `<div class="gate"><div class="card"><h1>Trips</h1><p class="hint">${esc(msg || "Plan trips together: a map, a day-by-day plan, bookings and a shared budget.")}</p><button class="btn accent" id="signIn" type="button">Sign in with Google</button></div></div>`;
+  $("#app").innerHTML = `<div class="gate"><div class="card"><h1><span class="brand-logo big" role="img" aria-label="Wayfinder"></span></h1><p class="hint">${esc(msg || "Plan trips together: a map, a day-by-day plan, bookings and a shared budget.")}</p><button class="btn accent" id="signIn" type="button">Sign in with Google</button></div></div>`;
   $("#signIn").onclick = async () => {
     try { await signInWithPopup(auth, provider); }
     catch (e) {
@@ -1578,7 +1578,7 @@ async function toggleWatch(id) {
   if ("Notification" in window && Notification.permission === "default") { try { await Notification.requestPermission(); } catch {} }
   WATCH[id] = { b: { num: b.num, depDate: b.depDate, depTime: b.depTime, arrDate: b.arrDate, arrTime: b.arrTime, from: b.from }, sig: STATUS[id] && !STATUS[id].none ? statusSig(STATUS[id]) : "" };
   saveWatch(); renderTrip();
-  toast(FLIGHT_KEY ? "Watching this flight. While Trips is open, it checks every 10 minutes in the week of the flight and alerts you to changes." : "Saved. Add a flight-status key to get alerts (see Help).");
+  toast(FLIGHT_KEY ? "Watching this flight. While Wayfinder is open, it checks every 10 minutes in the week of the flight and alerts you to changes." : "Saved. Add a flight-status key to get alerts (see Help).");
 }
 // background check while the app is open
 setInterval(() => { if (!FLIGHT_KEY || document.hidden) return; for (const [id, w] of Object.entries(WATCH)) if (statusWindow(w.b)) refreshStatus(id, true); }, 10 * 60 * 1000);
@@ -1844,7 +1844,7 @@ async function gmailToken() {
 }
 async function gmailGet(tok, path) {
   const r = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/" + path, { headers: { Authorization: "Bearer " + tok } });
-  if (!r.ok) { const j = await r.json().catch(() => ({})); const msg = j.error?.message || ""; throw Object.assign(new Error(/has not been used|is disabled/i.test(msg) ? "The Gmail API isn't turned on for this Firebase project yet. See Help → Import from Gmail for the one-time setup." : r.status === 403 ? "Gmail access wasn't allowed. Try again and tick the box to let Trips read your email." : "Couldn't read Gmail (" + r.status + ")."), { status: r.status }); }
+  if (!r.ok) { const j = await r.json().catch(() => ({})); const msg = j.error?.message || ""; throw Object.assign(new Error(/has not been used|is disabled/i.test(msg) ? "The Gmail API isn't turned on for this Firebase project yet. See Help → Import from Gmail for the one-time setup." : r.status === 403 ? "Gmail access wasn't allowed. Try again and tick the box to let Wayfinder read your email." : "Couldn't read Gmail (" + r.status + ")."), { status: r.status }); }
   return r.json();
 }
 function gmailModal() {
@@ -1852,7 +1852,7 @@ function gmailModal() {
   const t = T.trip, lo = validIso(t.start) ? addDays(t.start, -7) : "", hi = validIso(t.end) ? addDays(t.end, 7) : "";
   const inTrip = b => !lo || (bkDate(b) >= lo && bkDate(b) <= hi);
   openModal(`<div class="row between"><h2>Import from Gmail</h2><button class="iconbtn" type="button" data-close aria-label="Close">×</button></div>
-    <p class="hint">Trips looks through your confirmation emails for flights, stays, rental cars, trains and restaurant reservations, and lets you pick which to add. It only reads (it can't send, change or delete anything), the emails are read right here in your browser, and only the bookings you add are saved.</p>
+    <p class="hint">Wayfinder looks through your confirmation emails for flights, stays, rental cars, trains and restaurant reservations, and lets you pick which to add. It only reads (it can't send, change or delete anything), the emails are read right here in your browser, and only the bookings you add are saved.</p>
     <details><summary class="hint">Search settings</summary><label class="field" for="gmQ">Gmail search<input id="gmQ" value="${esc(GMAIL_Q)}"></label></details>
     <div class="row" style="justify-content:flex-end"><button class="btn accent" type="button" id="gmGo">Connect Gmail and scan</button></div>
     <p class="hint" id="gmMsg" role="status"></p><div id="gmList"></div>`, m => {
@@ -1864,7 +1864,7 @@ function gmailModal() {
       $("#gmList").innerHTML = (found.length ? `<h3>${lo ? "Around this trip's dates" : "Bookings found"}</h3>${inT.map(([b, i]) => row(b, i)).join("") || `<p class="hint">None in this trip's dates.</p>`}
         ${outT.length ? `<details><summary class="hint">${outT.length} from other dates</summary>${outT.map(([b, i]) => row(b, i)).join("")}</details>` : ""}
         <div class="row" style="justify-content:flex-end;margin-top:8px"><button class="btn accent" type="button" id="gmAdd" ${picked.size ? "" : "disabled"}>Add ${picked.size || ""} booking${picked.size === 1 ? "" : "s"}</button></div>` : "")
-        + (plain.length ? `<details ${found.length ? "" : "open"}><summary class="hint">${plain.length} confirmation email${plain.length === 1 ? "" : "s"} without details Trips can read</summary>${plain.slice(0, 20).map((p, i) => `<div class="gm-row"><span class="grow"><b>${esc(p.subject)}</b><span class="hint">${esc(p.from)} · ${esc(p.date)}</span></span><button class="btn ghost small" type="button" data-gp="${i}">Add by hand</button></div>`).join("")}</details>` : "");
+        + (plain.length ? `<details ${found.length ? "" : "open"}><summary class="hint">${plain.length} confirmation email${plain.length === 1 ? "" : "s"} without details Wayfinder can read</summary>${plain.slice(0, 20).map((p, i) => `<div class="gm-row"><span class="grow"><b>${esc(p.subject)}</b><span class="hint">${esc(p.from)} · ${esc(p.date)}</span></span><button class="btn ghost small" type="button" data-gp="${i}">Add by hand</button></div>`).join("")}</details>` : "");
       if ($("#gmAdd")) $("#gmAdd").onclick = add;
     };
     const add = async () => {
@@ -1899,7 +1899,7 @@ function gmailModal() {
         }
         const seen = new Set(); found = joinFlights(raw).filter(b => { const k = [b.kind, b.conf, bkDate(b), b.title].join("|"); if (seen.has(k)) return false; seen.add(k); return true; }).sort((a, b) => bkDate(a).localeCompare(bkDate(b)));
         picked = new Set(found.map((b, i) => i).filter(i => inTrip(found[i]) && !isDup(found[i])));
-        msg.textContent = found.length ? `Found ${found.length} booking${found.length === 1 ? "" : "s"} in ${ids.length} emails.` : `Checked ${ids.length} emails and found no booking details Trips can read.`;
+        msg.textContent = found.length ? `Found ${found.length} booking${found.length === 1 ? "" : "s"} in ${ids.length} emails.` : `Checked ${ids.length} emails and found no booking details Wayfinder can read.`;
         go.textContent = "Scan again"; paint();
       } catch (e) {
         msg.textContent = e.code === "auth/popup-closed-by-user" || e.code === "auth/cancelled-popup-request" ? "The Google window was closed." : e.code === "auth/user-mismatch" ? `Pick the same Google account you're signed in with (${ME.email}).` : e.code === "auth/popup-blocked" ? "Your browser blocked the Google window. Allow pop-ups for this site and try again." : e.message;
@@ -1914,7 +1914,7 @@ const HELP = [
   ["start", "Getting started", `<p>Each trip has its own map, day-by-day plan, bookings and budget. Make one with <b>New trip</b> on the home page, then open <b>Share</b> to invite people by their Google email. Everyone on a trip can edit it, and changes show up for everyone right away.</p>
     <p>Wide screens show sections on the left, the page in the middle and the map on the right. Use <b>List / Split / Map</b> at the top to hide the map or make it bigger. On a phone, the <b>Map</b> button switches between the two.</p>
     <p>Map labels are in English by default, even in places like Japan. To change that, tap your picture (top right) → <b>Map labels</b> and pick English, Both (English with the local name under it) or Local.</p>`],
-  ["places", "Places to visit", `<p>Search for anything (a museum, a beach, a café) and pick it from the list. Trips fills in the type, city, country, map pin and a photo when one is free to use. Tap ♥ on the places you're most excited about.</p>
+  ["places", "Places to visit", `<p>Search for anything (a museum, a beach, a café) and pick it from the list. Wayfinder fills in the type, city, country, map pin and a photo when one is free to use. Tap ♥ on the places you're most excited about.</p>
     <p>Filter by type, <b>country</b> and city. The city list narrows to the country you pick. Places saved without a country get one filled in automatically from their location.</p>`],
   ["plan", "Itinerary", `<ul><li><b>Add places</b> with <i>+ Add a place</i> on a day, or open <b>Saved places</b> and drag them into days. If search shows several branches, check the street and neighborhood under each name. You can also paste a Google Maps link, or coordinates copied by pressing and holding a spot in Google Maps.</li>
     <li><b>Reorder</b> by dragging, or with the ↑ ↓ buttons.</li>
@@ -1926,32 +1926,32 @@ const HELP = [
     <li><b>Ideas nearby</b> suggests well-known sights close to that day's places.</li></ul>`],
   ["bookings", "Bookings and flights", `<p>Add flights, trains, stays, rental cars and reservations with times and confirmation numbers. They appear on the right days in the itinerary.</p>
     <ul><li><b>Layovers</b>: add each stop in a flight. <b>Route map</b> on a flight draws the whole travel day with dashed lines through every layover. Tapping a travel day on the map shows the same thing.</li>
-    <li><b>Tracking</b>: flights with a number get FlightAware and Flightradar24 links. <b>Watch for changes</b> alerts you to delays, gate changes and cancellations while Trips is open (this needs the live-status key below).</li>
+    <li><b>Tracking</b>: flights with a number get FlightAware and Flightradar24 links. <b>Watch for changes</b> alerts you to delays, gate changes and cancellations while Wayfinder is open (this needs the live-status key below).</li>
     <li><b>Find stays nearby</b> lists hotels, hostels and B&amp;Bs close to the places on your days, or near where your flight lands, with links to check prices. <i>Add as stay</i> fills in a booking for you.</li></ul>`],
   ["food", "Restaurants", `<p>The Restaurants tab gathers the places to eat and drink you've saved, plus your restaurant reservations. <b>Find places to eat</b> searches around the places on your days, by restaurants, cafés or bars, and <i>Save</i> adds one to your list.</p>`],
-  ["gmail", "Import from Gmail", `<p>In <b>Bookings → Import from Gmail</b>, Trips asks Google for read-only access, finds confirmation emails, and shows the flights, stays, cars, trains and reservations it can read. You pick which to add. Connecting flights on one booking become one flight with layovers. Emails are read in your browser and nothing else is kept.</p>
+  ["gmail", "Import from Gmail", `<p>In <b>Bookings → Import from Gmail</b>, Wayfinder asks Google for read-only access, finds confirmation emails, and shows the flights, stays, cars, trains and reservations it can read. You pick which to add. Connecting flights on one booking become one flight with layovers. Emails are read in your browser and nothing else is kept.</p>
     <p>It works with emails that carry booking details for Gmail (most airlines, hotel chains, booking sites and rental companies). For the rest, it lists the email so you can add it by hand.</p>
     <p><b>One-time setup (trip owner):</b></p><ol><li>Open <a href="https://console.cloud.google.com/apis/library/gmail.googleapis.com" target="_blank" rel="noopener">Gmail API in Google Cloud</a>, pick your Firebase project, and click <b>Enable</b>.</li>
     <li>In <a href="https://console.cloud.google.com/auth/audience" target="_blank" rel="noopener">Google Auth Platform → Audience</a>: if it says <i>Testing</i>, add each person's Gmail under <b>Test users</b>.</li>
     <li>The first time, Google says it hasn't verified the app. That's expected for a personal app: click <b>Advanced → Go to …</b> and tick the box to allow reading email.</li></ol>`],
-  ["budget", "Budget and money", `<p>Log what you spend in any currency. Trips converts it to the trip's home currency with that day's exchange rate, splits it between the people you pick, and works out who owes whom. Bookings with a cost count too.</p>`],
+  ["budget", "Budget and money", `<p>Log what you spend in any currency. Wayfinder converts it to the trip's home currency with that day's exchange rate, splits it between the people you pick, and works out who owes whom. Bookings with a cost count too.</p>`],
   ["lists", "To-do and packing", `<p><b>To-do</b> is shared: assign tasks and set due dates. <b>Packing</b> is private: everyone on the trip has their own list.</p>`],
   ["export", "Export and offline", `<p><b>Export PDF</b> builds a printable trip book (itinerary with route sketches, bookings, budget, lists). Pick what to include, then save as PDF. Once you've opened a trip, it keeps working offline, and your edits sync when you're back online.</p>`],
-  ["google", "Google Maps (optional)", `<p>With a Google Maps key, Trips uses Google for the map, for search (so it can tell branches like Ippudo Harajuku and Ippudo Shinjuku apart, with exact addresses), and for <i>Stays nearby</i> and <i>Find places to eat</i>, with ratings. Without a key, it uses the free OpenStreetMap versions.</p>
+  ["google", "Google Maps (optional)", `<p>With a Google Maps key, Wayfinder uses Google for the map, for search (so it can tell branches like Ippudo Harajuku and Ippudo Shinjuku apart, with exact addresses), and for <i>Stays nearby</i> and <i>Find places to eat</i>, with ratings. Without a key, it uses the free OpenStreetMap versions.</p>
     <ol><li>In <a href="https://console.cloud.google.com/billing" target="_blank" rel="noopener">Google Cloud → Billing</a>, link a billing account to your Firebase project.</li>
     <li>Enable <a href="https://console.cloud.google.com/apis/library/maps-backend.googleapis.com" target="_blank" rel="noopener">Maps JavaScript API</a> and <a href="https://console.cloud.google.com/apis/library/places.googleapis.com" target="_blank" rel="noopener">Places API (New)</a>.</li>
     <li>In <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener">Credentials</a>, click <b>Create credentials → API key</b>. Under <b>Application restrictions</b>, choose <b>Websites</b> and add <code>https://sallylsm.github.io/*</code>. Under <b>API restrictions</b>, pick the two APIs above.</li>
     <li>Add this line to <code>config.js</code>: <code>export const googleMapsKey = "your-key";</code></li>
     <li>To be sure it stays free: set daily limits on each API's <b>Quotas</b> page, and add a $1 alert in <b>Billing → Budgets &amp; alerts</b>.</li></ol>`],
-  ["status", "Live flight status (optional)", `<p>Tracking links always work. To see live status and get change alerts inside Trips, add a free flight-status key:</p>
+  ["status", "Live flight status (optional)", `<p>Tracking links always work. To see live status and get change alerts inside Wayfinder, add a free flight-status key:</p>
     <ol><li>Make a free account at <a href="https://rapidapi.com/aedbx-aedbx/api/aerodatabox" target="_blank" rel="noopener">AeroDataBox on RapidAPI</a> and subscribe to the free <b>Basic</b> plan.</li>
     <li>Copy your <b>X-RapidAPI-Key</b> and add this line to <code>config.js</code>: <code>export const flightStatusKey = "your-key";</code></li></ol>
-    <p>Status shows up in the week of each flight. Alerts work while Trips is open in a tab or installed on your phone's home screen. For alerts when the app is closed, also turn on notifications in your airline's app.</p>`],
+    <p>Status shows up in the week of each flight. Alerts work while Wayfinder is open in a tab or installed on your phone's home screen. For alerts when the app is closed, also turn on notifications in your airline's app.</p>`],
 ];
 function renderHelp() {
   $("#crumb").textContent = "Guide"; $("#backBtn").hidden = false; $("#layoutSeg").hidden = true;
-  $("#app").innerHTML = `<div class="help"><aside class="help-toc"><b>How to use Trips</b>${HELP.map(([k, h]) => `<a href="#/help/${k}">${h}</a>`).join("")}</aside>
-    <div class="help-body"><h1>How to use Trips</h1><p class="hint">A quick tour of everything the planner does.</p>${HELP.map(([k, h, body], i) => `<section class="card" id="h-${k}"><h2><span class="help-n">${i + 1}</span>${h}</h2>${body}</section>`).join("")}</div></div>`;
+  $("#app").innerHTML = `<div class="help"><aside class="help-toc"><b>How to use Wayfinder</b>${HELP.map(([k, h]) => `<a href="#/help/${k}">${h}</a>`).join("")}</aside>
+    <div class="help-body"><h1>How to use Wayfinder</h1><p class="hint">A quick tour of everything the planner does.</p>${HELP.map(([k, h, body], i) => `<section class="card" id="h-${k}"><h2><span class="help-n">${i + 1}</span>${h}</h2>${body}</section>`).join("")}</div></div>`;
   const sec = location.hash.split("/")[2]; if (sec) document.getElementById("h-" + sec)?.scrollIntoView();
   $(".help-toc").onclick = e => { const a = e.target.closest("a"); if (!a) return; e.preventDefault(); document.getElementById("h-" + a.getAttribute("href").split("/")[2])?.scrollIntoView({ behavior: reduceMotion() ? "auto" : "smooth" }); };
   try { localStorage.setItem("trips-seen-help", "1"); } catch {}
@@ -2218,7 +2218,7 @@ function printHtml() {
     <p class="pb-sub">${members().map(e => esc(nameOf(e))).join(", ")}</p>
     <div class="pb-stats"><div><b>${days.length}</b><span>days</span></div><div><b>${all.filter(p => days.includes(p.day)).length}</b><span>places planned</span></div><div><b>${bkAll.length}</b><span>bookings</span></div><div><b>${money(spent + planned)}</b><span>${budget ? "of " + money(budget) + " budget" : "spent + planned"}</span></div></div>
     ${bkAll.filter(b => (KINDS[b.kind] || KINDS.other).group === "transport").length ? `<h3>Getting there and around</h3><table class="pb-tbl"><tbody>${bkAll.filter(b => (KINDS[b.kind] || KINDS.other).group === "transport").map(b => `<tr><td><b>${esc((KINDS[b.kind] || KINDS.other).label)}</b>${b.num ? " " + esc(b.num) : ""}</td><td>${bookingLine(b)}</td><td>${b.conf ? `Conf. <b>${esc(b.conf)}</b>` : ""}</td></tr>`).join("")}</tbody></table>` : ""}
-    <p class="pb-foot">Exported ${esc(new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }))} from Trips</p></section>`;
+    <p class="pb-foot">Exported ${esc(new Date().toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric" }))} from Wayfinder</p></section>`;
   if (O.itinerary && days.length) {
     h += `<section class="pb-sec pb-big"><h2>Itinerary</h2>`;
     days.forEach((iso, i) => {
@@ -2322,7 +2322,7 @@ function viewOverview(v) {
   $("#ovBudget").oninput = e => { T.trip.budget = num(e.target.value); upd({ budget: num(e.target.value) }); };
   $("#ovMode").onchange = e => { updateDoc(tripRef, { mode: e.target.value }).catch(fail); };
   $("#ovCur").onchange = e => rebaseCurrency(e.target.value);
-  const dates = () => { let s = $("#ovStart").value, en = $("#ovEnd").value; if (validIso(s) && (!validIso(en) || en < s)) { en = s; $("#ovEnd").value = s; } if (validIso(s) && daysBetween(s, en) > 59) { toast("Trips can be up to 60 days."); return; } updateDoc(tripRef, { start: s, end: en }).catch(fail); };
+  const dates = () => { let s = $("#ovStart").value, en = $("#ovEnd").value; if (validIso(s) && (!validIso(en) || en < s)) { en = s; $("#ovEnd").value = s; } if (validIso(s) && daysBetween(s, en) > 59) { toast("Wayfinder can be up to 60 days."); return; } updateDoc(tripRef, { start: s, end: en }).catch(fail); };
   $("#ovStart").onchange = dates; $("#ovEnd").onchange = dates;
   destEditor($("#ovDest"), $("#ovDestL"), $("#ovChips"), () => tripDests(T.trip), l => { T.trip.dests = l; T.trip.dest = l[0] || null; updateDoc(tripRef, { dests: l, dest: l[0] || null }).catch(fail); });
   $("#ovCover").onclick = async () => {
@@ -2428,7 +2428,7 @@ function loadGoogle() {
   return gReady ||= new Promise((res, rej) => {
     window.__gmInit = () => res();
     // Google calls this when the key is wrong or not allowed on this site
-    window.gm_authFailure = () => { gFailed = true; gReady = null; toast("Google Maps didn't accept the key, so Trips is using the free map and search. Check the key's website restriction and that billing is on."); setTiles(); };
+    window.gm_authFailure = () => { gFailed = true; gReady = null; toast("Google Maps didn't accept the key, so Wayfinder is using the free map and search. Check the key's website restriction and that billing is on."); setTiles(); };
     const el = document.createElement("script");
     el.src = `https://maps.googleapis.com/maps/api/js?key=${encodeURIComponent(GKEY)}&v=weekly&language=en&libraries=places&loading=async&callback=__gmInit`;
     el.async = true; el.onerror = () => { gReady = null; rej(new Error("load")); }; document.head.append(el);
