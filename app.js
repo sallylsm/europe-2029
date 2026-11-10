@@ -521,7 +521,10 @@ function bookingsOn(iso) {
   for (const [id, b] of Object.entries(T.bookings)) {
     const k = KINDS[b.kind] || KINDS.other;
     if (k.group === "transport") {
-      if (b.depDate === iso) out.push({ id, b, t: b.depTime || "", txt: `<b>${esc(k.label)}</b> ${esc(b.num ? b.num + " · " : "")}${esc(b.from || "?")} ${esc(b.depTime || "")} → ${esc(b.to || "?")} ${esc(b.arrTime || "")}${b.arrDate && b.arrDate !== b.depDate ? " (+" + daysBetween(b.depDate, b.arrDate) + ")" : ""}` });
+      if (b.depDate === iso) {
+        const route = b.from || b.to ? `${esc(b.from || "?")} ${esc(b.depTime || "")} → ${esc(b.to || "?")} ${esc(b.arrTime || "")}${b.arrDate && b.arrDate !== b.depDate ? " (+" + daysBetween(b.depDate, b.arrDate) + ")" : ""}` : `${esc(b.title || "")}${b.depTime ? " · " + esc(b.depTime) : ""}`;
+        out.push({ id, b, t: b.depTime || "", txt: `<b>${esc(k.label)}</b> ${esc(b.num ? b.num + " · " : "")}${route}` });
+      }
       else if (b.arrDate === iso) out.push({ id, b, t: b.arrTime || "", txt: `<b>Arrive</b> ${esc(b.title || k.label)} · ${esc(b.to || "")} ${esc(b.arrTime || "")}` });
     } else if (k.group === "lodging") {
       if (b.checkIn === iso) out.push({ id, b, t: b.checkInTime || "15:00", txt: `<b>Check in</b> ${esc(b.title || "Stay")}${b.checkInTime ? " · " + esc(b.checkInTime) : ""}` });
@@ -1103,7 +1106,9 @@ function setTiles() {
   if (!map) return;
   const dark = document.documentElement.dataset.theme === "dark";
   if (tiles) map.removeLayer(tiles);
-  tiles = L.tileLayer(`https://{s}.basemaps.cartocdn.com/${dark ? "dark_all" : "rastertiles/voyager"}/{z}/{x}/{y}{r}.png`, { subdomains: "abcd", maxZoom: 20, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>' }).addTo(map);
+  // Standard OpenStreetMap tiles (no key needed); dark mode darkens them in the browser
+  tiles = L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", { maxZoom: 19, attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors' }).addTo(map);
+  map.getContainer().classList.toggle("dark-tiles", dark);
 }
 function destroyMap() { if (map) { map.remove(); map = null; tiles = null; layer = null; } lastFitKey = ""; }
 const icon = (html, cls = "", col = "var(--accent)", size = 26) => L.divIcon({ className: "", html: `<div class="mk ${cls}" style="--mc:${col}">${html}</div>`, iconSize: [size, size], iconAnchor: [size / 2, size / 2], popupAnchor: [0, -size / 2] });
