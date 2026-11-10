@@ -22,12 +22,15 @@ try { const t = JSON.parse(localStorage.getItem("e29-theme") || "{}"), m = t.mod
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <link rel="stylesheet" href="style.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Sortable/1.15.2/Sortable.min.js"></script>
 </head>
 <body>
 <header class="top">
+  <a class="iconbtn back" id="backBtn" href="#/" aria-label="Back to your trips" title="Back to your trips" hidden>←</a>
   <a class="brand" href="#/"><i>T</i>Trips</a>
   <span class="crumb" id="crumb"></span>
   <span class="grow"></span>
+  <span class="layout-seg" id="layoutSeg" role="group" aria-label="Map size" hidden></span>
   <div class="menu-wrap">
     <button class="iconbtn" id="meBtn" type="button" aria-expanded="false" aria-controls="mePop" aria-label="Account and theme"><span class="avatar" id="meAv">?</span></button>
     <div class="pop" id="mePop" hidden>
