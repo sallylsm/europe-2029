@@ -38,11 +38,21 @@ function km(a, b) {
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 const hasPt = p => p && p.lat != null && p.lon != null && isFinite(p.lat) && isFinite(p.lon);
-function legText(d) {
+// Ways of getting around a day; times are estimates from straight-line distance
+const MODES = {
+  walk: { label: "Walking", verb: "walk", g: "walking", mins: d => d * 1.25 / 4.8 * 60 },
+  transit: { label: "Bus & train", verb: "by transit", g: "transit", mins: d => d * 1.3 / 18 * 60 + 8 },
+  drive: { label: "Driving", verb: "drive", g: "driving", mins: d => d * 1.35 / 32 * 60 + 4 },
+  bike: { label: "Biking", verb: "bike", g: "bicycling", mins: d => d * 1.2 / 14 * 60 },
+};
+function legMins(d, mode) { return Math.max(1, Math.round((MODES[mode] || MODES.walk).mins(d))); }
+function legText(d, mode = "walk") {
   if (d < 0.05) return "Right next door";
-  if (d <= 2) return `${(d).toFixed(1)} km · ${Math.max(1, Math.round(d * 1.25 / 4.8 * 60))} min walk`;
-  if (d <= 80) return `${d.toFixed(1)} km · ~${Math.round(d * 1.3 / 28 * 60 + 5)} min by car or transit`;
-  return `${Math.round(d)} km · a longer trip, check transport`;
+  if (d > 150) return `${Math.round(d)} km · a long way, check trains or flights`;
+  // a long walk is better done another way: suggest it
+  const m = MODES[mode] || MODES.walk, t = legMins(d, mode);
+  const hint = mode === "walk" && d > 3 ? ` · or ~${fmtMin(legMins(d, "transit"))} by transit` : "";
+  return `${d < 10 ? d.toFixed(1) : Math.round(d)} km · ${t >= 60 ? "~" : ""}${fmtMin(t)} ${m.verb}${hint}`;
 }
 const fmtMin = m => m >= 60 ? `${Math.floor(m / 60)}h${m % 60 ? " " + (m % 60) + "m" : ""}` : `${m}m`;
 function parseDur(t) {
@@ -82,7 +92,7 @@ let ME = null;             // { uid, email, name }
 let TRIPS = {};            // id -> trip doc
 let unsubHome = null;
 let cur = null;            // { id, tab, unsubs: [] }
-const T = { trip: null, places: {}, days: {}, bookings: {}, expenses: {}, checklist: {}, photos: {} };
+const T = { trip: null, places: {}, days: {}, bookings: {}, expenses: {}, checklist: {}, photos: {}, notes: {} };
 const latest = {}, timers = {}, chains = {};
 let oldEurope = null;      // set when the old Europe 2029 data can be read
 
@@ -355,7 +365,7 @@ const closeModal = () => { $("#modalRoot").innerHTML = ""; };
 // ================================================================ AUTH
 const provider = new GoogleAuthProvider(); provider.setCustomParameters({ prompt: "select_account" });
 function renderGate(msg) {
-  $("#crumb").textContent = ""; $("#meBtn").hidden = true;
+  $("#crumb").textContent = ""; $("#meBtn").hidden = true; $("#backBtn").hidden = true; $("#layoutSeg").hidden = true;
   $("#app").innerHTML = `<div class="gate"><div class="card"><h1>Trips</h1><p class="hint">${esc(msg || "Plan trips together: a map, a day-by-day plan, bookings and a shared budget.")}</p><button class="btn accent" id="signIn" type="button">Sign in with Google</button></div></div>`;
   $("#signIn").onclick = async () => {
     try { await signInWithPopup(auth, provider); }
@@ -399,7 +409,7 @@ function tripWhen(t) {
   return "Happening now";
 }
 function renderHome(err) {
-  $("#crumb").textContent = "";
+  $("#crumb").textContent = ""; $("#backBtn").hidden = true; $("#layoutSeg").hidden = true;
   const list = Object.entries(TRIPS).sort((a, b) => String(a[1].start || "9").localeCompare(String(b[1].start || "9")));
   const imported = list.some(([, t]) => t.importedFrom === "europe2029");
   $("#app").innerHTML = `<div class="home">
@@ -444,7 +454,7 @@ function newTripModal() {
 }
 
 // ================================================================ TRIP VIEW
-const TABS = [["plan", "Itinerary"], ["places", "Places"], ["bookings", "Bookings"], ["budget", "Budget"], ["overview", "Overview"]];
+const TABS = [["plan", "Itinerary"], ["places", "Places"], ["bookings", "Bookings"], ["budget", "Budget"], ["notes", "Notes"], ["overview", "Overview"]];
 function leaveTrip() {
   if (!cur) return;
   cur.unsubs.forEach(u => u()); cur = null;
@@ -455,7 +465,7 @@ function openTrip(id, tab) {
   if (cur && cur.id === id) { if (cur.tab !== tab) { cur.tab = tab; mapFocus = null; fitPending = true; renderTrip(); renderMap(); } return; }
   leaveTrip();
   cur = { id, tab, unsubs: [] };
-  $("#app").innerHTML = `<div class="trip"><div class="panel" id="panel"><div class="view"><p class="hint">Loading trip…</p></div></div><div class="mapwrap"><div id="map"></div></div></div><button class="btn accent mapbtn" id="mapToggle" type="button">Map</button>`;
+  $("#app").innerHTML = `<div class="trip layout-${layout}"><div class="panel" id="panel"><div class="view"><p class="hint">Loading trip…</p></div></div><div class="mapwrap"><div id="map"></div><div class="map-days" id="mapDays" hidden></div></div></div><button class="btn accent mapbtn" id="mapToggle" type="button">Map</button>`;
   $("#mapToggle").onclick = () => { document.body.classList.toggle("show-map"); $("#mapToggle").textContent = document.body.classList.contains("show-map") ? "List" : "Map"; map?.invalidateSize(); };
   initMap();
   const rerender = debounce(() => { if (cur?.id === id) { renderTrip(true); renderMap(); } }, 60);
@@ -465,7 +475,7 @@ function openTrip(id, tab) {
     if (ME && !(T.trip.names || {})[ekey(ME.email)] && members().includes(ME.email)) updateDoc(doc(fs, "trips/" + id), { ["names." + ekey(ME.email)]: ME.name }).catch(() => {});
     rerender();
   }, e => { $("#panel").innerHTML = `<div class="view"><p class="banner">${e.code === "permission-denied" ? "You're not a member of this trip. Ask the person who planned it to invite your Google email." : "Couldn't load this trip."}</p><a href="#/">Back to your trips</a></div>`; }));
-  for (const name of ["places", "days", "bookings", "expenses", "checklist", "photos"]) {
+  for (const name of ["places", "days", "bookings", "expenses", "checklist", "photos", "notes"]) {
     cur.unsubs.push(onSnapshot(collection(fs, `trips/${id}/${name}`), snap => {
       const o = {}; snap.docs.forEach(d => { o[d.id] = { ...d.data() }; });
       for (const p of Object.keys(latest)) if (p.startsWith(`trips/${id}/${name}/`)) o[p.split("/").pop()] = latest[p];
@@ -479,8 +489,8 @@ function renderTrip(fromData = false) {
   const t = T.trip, panel = $("#panel"), scroll = panel.scrollTop;
   // keep focus and typing intact while data streams in
   const a = document.activeElement, focusId = a && panel.contains(a) && a.id ? a.id : null, sel = focusId && a.selectionStart != null ? [a.selectionStart, a.selectionEnd] : null;
-  if (fromData && focusId && a.matches("input:not([type=checkbox]):not([type=file]), textarea, select")) { pendingRender = true; return; }
-  $("#crumb").textContent = t.name || "";
+  if (fromData && ((focusId && a.matches("input:not([type=checkbox]):not([type=file]), textarea, select")) || dragging)) { pendingRender = true; return; }
+  $("#crumb").textContent = t.name || ""; $("#backBtn").hidden = false; $("#layoutSeg").hidden = false;
   const range = validIso(t.start) ? `${fmtD(t.start, { month: "short", day: "numeric" })} – ${fmtD(t.end, { month: "short", day: "numeric", year: "numeric" })}` : "Add dates in Overview";
   panel.innerHTML = `<div class="hero">${t.cover ? `<img src="${esc(t.cover)}" alt="">` : ""}
       <div class="hero-btns"><button class="btn small" type="button" id="inviteBtn">Share</button></div>
@@ -488,11 +498,22 @@ function renderTrip(fromData = false) {
     <nav class="tabs" aria-label="Trip sections">${TABS.map(([k, l]) => `<a href="#/t/${cur.id}/${k}" ${cur.tab === k ? 'aria-current="page"' : ""}>${l}</a>`).join("")}</nav>
     <div class="view" id="view"></div>`;
   $("#inviteBtn").onclick = inviteModal;
-  ({ plan: viewPlan, places: viewPlaces, bookings: viewBookings, budget: viewBudget, overview: viewOverview }[cur.tab] || viewPlan)($("#view"));
+  ({ plan: viewPlan, places: viewPlaces, bookings: viewBookings, budget: viewBudget, notes: viewNotes, overview: viewOverview }[cur.tab] || viewPlan)($("#view"));
   panel.scrollTop = scroll;
   if (focusId) { const el = document.getElementById(focusId); if (el) { el.focus(); if (sel && el.setSelectionRange) try { el.setSelectionRange(...sel); } catch {} } }
 }
-let pendingRender = false;
+let pendingRender = false, dragging = false;
+// List / Split / Map layout, remembered on this device
+let layout = (() => { try { return localStorage.getItem("trips-layout") || "split"; } catch { return "split"; } })();
+setTimeout(() => $$("[data-layout]").forEach(b => b.setAttribute("aria-pressed", b.dataset.layout === layout)), 0);
+$("#layoutSeg").innerHTML = [["list", "List"], ["split", "Split"], ["map", "Map"]].map(([k, l]) => `<button type="button" data-layout="${k}" title="${k === "list" ? "Hide the map" : k === "map" ? "Bigger map" : "List and map side by side"}">${l}</button>`).join("");
+$("#layoutSeg").addEventListener("click", e => { const b = e.target.closest("[data-layout]"); if (b) setLayout(b.dataset.layout); });
+function setLayout(l) {
+  layout = l; try { localStorage.setItem("trips-layout", l); } catch {}
+  const t = $(".trip"); if (t) { t.classList.remove("layout-list", "layout-split", "layout-map"); t.classList.add("layout-" + l); }
+  $$("[data-layout]").forEach(b => b.setAttribute("aria-pressed", b.dataset.layout === l));
+  if (map) setTimeout(() => { map.invalidateSize(); fitPending = true; renderMap(); }, 60);
+}
 document.addEventListener("focusout", () => setTimeout(() => { if (pendingRender && cur) { pendingRender = false; renderTrip(); renderMap(); } }, 0));
 
 // ---------------------------------------------------------------- places data
@@ -546,43 +567,46 @@ function viewPlan(v) {
     ${days.map((iso, i) => dayHtml(iso, i)).join("")}`;
   wirePlan(v);
 }
+const dayMode = iso => T.days[iso]?.mode || T.trip?.mode || "walk";
 function dayHtml(iso, i) {
   const items = dayPlaces(iso), bk = bookingsOn(iso), stay = stayFor(iso), notes = T.days[iso]?.notes || "", photos = Object.entries(T.photos).filter(([, p]) => p.day === iso);
-  const focus = mapFocus === iso;
-  let total = 0, legs = [];
-  for (let k = 1; k < items.length; k++) { if (hasPt(items[k - 1]) && hasPt(items[k])) { const d = km(items[k - 1], items[k]); total += d; legs[k] = d; } }
+  const focus = mapFocus === iso, mode = dayMode(iso);
+  let total = 0, mins = 0; const legs = [];
+  for (let k = 1; k < items.length; k++) if (hasPt(items[k - 1]) && hasPt(items[k])) { const d = km(items[k - 1], items[k]); total += d; mins += d > 0.05 ? legMins(d, mode) : 0; legs[k] = d; }
   const pts = items.filter(hasPt);
+  const travelDay = !items.length && bk.some(x => (KINDS[x.b.kind] || KINDS.other).group === "transport");
   return `<section class="day ${focus ? "focus" : ""}" id="day-${iso}" data-day="${iso}" style="--dc:${dayCol(i)}">
-    <div class="day-head" data-focus="${iso}" role="button" tabindex="0" aria-label="Show ${esc(dayLabel(iso))} on the map">
+    <div class="day-head" data-focus="${iso}" role="button" tabindex="0" aria-pressed="${focus}" aria-label="Show only ${esc(dayLabel(iso))} on the map">
       <span class="day-dot"></span><div class="grow"><h2>${esc(fmtD(iso, { weekday: "long", month: "long", day: "numeric" }))}</h2>
-      <span class="meta">Day ${i + 1}${items.length ? ` · ${items.length} place${items.length === 1 ? "" : "s"}` : ""}${total ? ` · ${total.toFixed(1)} km` : ""}</span></div>
-      ${focus ? `<span class="pill accent">On map</span>` : ""}</div>
+      <span class="meta">Day ${i + 1}${travelDay ? " · Travel day" : ""}${items.length ? ` · ${items.length} place${items.length === 1 ? "" : "s"}` : ""}${total ? ` · ${total.toFixed(1)} km · about ${fmtMin(mins)} ${MODES[mode].verb}` : ""}</span></div>
+      ${focus ? `<span class="pill accent">Only this day on map</span>` : ""}</div>
     <div class="day-body">
       ${bk.map(x => `<div class="bk-mini">${x.txt}</div>`).join("")}
-      <textarea class="day-notes" id="dn-${iso}" data-notes="${iso}" data-live placeholder="Notes for the day…" rows="${Math.min(8, Math.max(1, notes.split("\n").length))}">${esc(notes)}</textarea>
-      <ol class="stops drop-zone" data-drop="${iso}">
-        ${items.map((p, k) => `${k && legs[k] != null ? `<li class="leg" aria-hidden="true">${esc(legText(legs[k]))}</li>` : ""}
-          <li class="stop" draggable="true" data-id="${p.id}" style="--tc:${TYPE[p.type].col}">
-            <span class="num">${k + 1}</span>
-            <span class="thumb">${photoSrcOf(p) ? `<img src="${esc(photoSrcOf(p))}" alt="" loading="lazy" onerror="this.remove()">` : esc(p.name.charAt(0))}</span>
-            <span><span class="nm">${esc(p.name)}</span><span class="sub"><span>${esc(TYPE[p.type].label)}${p.city ? " · " + esc(p.city) : ""}</span><input type="time" id="tm-${p.id}" data-time="${p.id}" data-live value="${esc(p.time || "")}" aria-label="Time for ${esc(p.name)}"></span></span>
-            <span class="acts"><button class="iconbtn" type="button" data-up="${p.id}" aria-label="Move up">↑</button><button class="iconbtn" type="button" data-down="${p.id}" aria-label="Move down">↓</button><button class="iconbtn" type="button" data-edit="${p.id}" aria-label="Edit ${esc(p.name)}">✎</button><button class="iconbtn del" type="button" data-unsched="${p.id}" aria-label="Remove from this day">×</button></span>
-          </li>`).join("")}
-      </ol>
-      ${photos.length ? `<div class="row" style="gap:6px">${photos.map(([pid, ph]) => `<img src="${esc(ph.data)}" alt="Trip photo" data-zoom style="width:64px;height:48px;object-fit:cover;border-radius:7px;cursor:zoom-in">`).join("")}</div>` : ""}
+      <textarea class="day-notes" id="dn-${iso}" data-notes="${iso}" placeholder="Notes for the day…" rows="${Math.min(8, Math.max(1, notes.split("\n").length))}">${esc(notes)}</textarea>
+      ${items.length > 1 ? `<label class="mode-pick">Getting around <select id="md-${iso}" data-mode="${iso}" aria-label="How you'll get around on ${esc(dayLabel(iso))}">${Object.entries(MODES).map(([k, m]) => `<option value="${k}" ${k === mode ? "selected" : ""}>${m.label}</option>`).join("")}</select></label>` : ""}
+      <ol class="stops" data-drop="${iso}">${items.map((p, k) => `<li class="stop-wrap" data-id="${p.id}">
+          ${k && legs[k] != null ? `<div class="leg" aria-hidden="true">${esc(legText(legs[k], mode))}</div>` : ""}
+          <div class="stop" style="--tc:${TYPE[p.type].col}">
+            <span class="grip" aria-hidden="true">⋮⋮</span><span class="num">${k + 1}</span>
+            <span class="thumb">${photoSrcOf(p) ? `<img src="${esc(photoSrcOf(p))}" alt="" loading="lazy" draggable="false" onerror="this.remove()">` : esc(p.name.charAt(0))}</span>
+            <span class="info"><span class="nm">${esc(p.name)}</span><span class="sub"><span>${esc(TYPE[p.type].label)}${p.city && p.city !== p.name ? " · " + esc(p.city) : ""}</span><input type="time" id="tm-${p.id}" data-time="${p.id}" value="${esc(p.time || "")}" aria-label="Time for ${esc(p.name)}"></span></span>
+            <span class="acts"><button class="iconbtn" type="button" data-up="${p.id}" aria-label="Move ${esc(p.name)} up">↑</button><button class="iconbtn" type="button" data-down="${p.id}" aria-label="Move ${esc(p.name)} down">↓</button><button class="iconbtn" type="button" data-edit="${p.id}" aria-label="Edit ${esc(p.name)}">✎</button><button class="iconbtn del" type="button" data-unsched="${p.id}" aria-label="Remove ${esc(p.name)} from this day">×</button></span>
+          </div></li>`).join("")}</ol>
+      ${photos.length ? `<div class="row" style="gap:6px">${photos.map(([, ph]) => `<img src="${esc(ph.data)}" alt="Trip photo" data-zoom style="width:64px;height:48px;object-fit:cover;border-radius:7px;cursor:zoom-in">`).join("")}</div>` : ""}
       ${stay ? `<div class="bk-mini"><b>Staying at</b> ${esc(stay[1].title || "your stay")}</div>` : ""}
-      ${openAdd === iso ? `<div class="suggest-wrap"><input id="add-${iso}" autocomplete="off" placeholder="Search saved places or anywhere…" role="combobox" aria-expanded="false" aria-controls="addl-${iso}" data-live><ul class="suggest" id="addl-${iso}" role="listbox" hidden></ul></div>` : ""}
+      ${openAdd === iso ? `<div class="suggest-wrap add-box"><input id="add-${iso}" autocomplete="off" placeholder="Search saved places or anywhere…" role="combobox" aria-expanded="false" aria-controls="addl-${iso}"><ul class="suggest" id="addl-${iso}" role="listbox" hidden></ul></div>` : ""}
+      ${openIdeas === iso ? ideasHtml(iso) : ""}
       <div class="day-actions">
         <button class="btn small ${openAdd === iso ? "ghost" : ""}" type="button" data-add="${iso}">${openAdd === iso ? "Done adding" : "+ Add a place"}</button>
+        <button class="btn ghost small" type="button" data-ideas="${iso}" aria-expanded="${openIdeas === iso}">${openIdeas === iso ? "Hide ideas" : "Ideas nearby"}</button>
         ${pts.length > 2 ? `<button class="btn ghost small" type="button" data-opt="${iso}" title="Reorder stops to shorten the day's route">Optimize route</button>` : ""}
-        ${pts.length > 1 ? `<a class="btn ghost small" href="${esc(dirUrl(pts))}" target="_blank" rel="noopener">Directions ↗</a>` : ""}
+        ${pts.length > 1 ? `<a class="btn ghost small" href="${esc(dirUrl(pts, mode))}" target="_blank" rel="noopener">Directions ↗</a>` : ""}
       </div>
     </div></section>`;
 }
-function dirUrl(pts) {
+function dirUrl(pts, mode = "walk") {
   const ll = p => `${p.lat},${p.lon}`, mid = pts.slice(1, -1).slice(0, 9);
-  let total = 0; for (let i = 1; i < pts.length; i++) total += km(pts[i - 1], pts[i]);
-  return `https://www.google.com/maps/dir/?api=1&origin=${ll(pts[0])}&destination=${ll(pts[pts.length - 1])}${mid.length ? "&waypoints=" + encodeURIComponent(mid.map(ll).join("|")) : ""}&travelmode=${total < 6 ? "walking" : "transit"}`;
+  return `https://www.google.com/maps/dir/?api=1&origin=${ll(pts[0])}&destination=${ll(pts[pts.length - 1])}${mid.length ? "&waypoints=" + encodeURIComponent(mid.map(ll).join("|")) : ""}&travelmode=${(MODES[mode] || MODES.walk).g}`;
 }
 function reorderDay(iso, ids) {
   ids.forEach((id, k) => { if (T.places[id] && (T.places[id].order !== k || T.places[id].day !== iso)) { T.places[id] = { ...T.places[id], day: iso, order: k }; savePlace(id); } });
@@ -591,7 +615,6 @@ function optimize(iso) {
   const items = dayPlaces(iso), pts = items.filter(hasPt), rest = items.filter(p => !hasPt(p));
   if (pts.length < 3) return;
   const len = arr => arr.reduce((a, p, i) => i ? a + km(arr[i - 1], p) : 0, 0);
-  // nearest neighbour from the first stop, then 2-opt, keeping the first stop fixed
   let route = [pts[0]], left = pts.slice(1);
   while (left.length) { const last = route[route.length - 1]; left.sort((a, b) => km(last, a) - km(last, b)); route.push(left.shift()); }
   let improved = true;
@@ -612,42 +635,120 @@ function optimize(iso) {
 function wirePlan(v) {
   v.addEventListener("click", e => {
     const f = e.target.closest("[data-focus]");
-    if (f && !e.target.closest("button")) { mapFocus = mapFocus === f.dataset.focus ? null : f.dataset.focus; fitPending = true; renderTrip(); renderMap(); return; }
+    if (f && !e.target.closest("button, select, input")) { focusDay(mapFocus === f.dataset.focus ? null : f.dataset.focus); return; }
     const b = e.target.closest("button, img[data-zoom]"); if (!b) return;
     if (b.dataset.add) { openAdd = openAdd === b.dataset.add ? null : b.dataset.add; renderTrip(); const inp = openAdd && $("#add-" + openAdd); if (inp) { wireAdd(openAdd); inp.focus(); } return; }
+    if (b.dataset.ideas) { openIdeas = openIdeas === b.dataset.ideas ? null : b.dataset.ideas; renderTrip(); if (openIdeas) loadIdeas(openIdeas); return; }
+    if (b.dataset.idea) return useIdea(b.dataset.idea, b.dataset.how, b.closest("[data-ideas-for]").dataset.ideasFor);
+    if (b.dataset.ideasWhere) { ideasWherePrompt(b.dataset.ideasWhere); return; }
     if (b.dataset.opt) return optimize(b.dataset.opt);
     if (b.dataset.edit) return placeModal(b.dataset.edit);
     if (b.dataset.unsched) { const id = b.dataset.unsched; T.places[id] = { ...T.places[id], day: "", time: "" }; savePlace(id); renderTrip(); renderMap(); return; }
     if (b.dataset.up || b.dataset.down) {
       const id = b.dataset.up || b.dataset.down, iso = T.places[id].day, ids = dayPlaces(iso).map(p => p.id), i = ids.indexOf(id), j = i + (b.dataset.up ? -1 : 1);
-      if (j < 0 || j >= ids.length) return; [ids[i], ids[j]] = [ids[j], ids[i]]; reorderDay(iso, ids); renderTrip(); renderMap(); return;
+      if (j < 0 || j >= ids.length) return; [ids[i], ids[j]] = [ids[j], ids[i]]; reorderDay(iso, ids); renderTrip(); renderMap();
+      document.querySelector(`[data-${b.dataset.up ? "up" : "down"}="${id}"]`)?.focus(); return;
     }
     if (b.dataset.zoom != null) lightbox(b.src);
   });
-  v.addEventListener("keydown", e => { const f = e.target.closest("[data-focus]"); if (f && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); f.click(); } });
+  v.addEventListener("keydown", e => { const f = e.target.closest("[data-focus]"); if (f && e.target === f && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); f.click(); } });
   v.addEventListener("input", e => {
     if (e.target.dataset.notes) { const iso = e.target.dataset.notes; T.days[iso] = { ...(T.days[iso] || {}), notes: e.target.value.slice(0, 2000) }; save(tp("days/" + iso), T.days[iso], 700); }
   });
   v.addEventListener("change", e => {
     if (e.target.dataset.time) { const id = e.target.dataset.time; T.places[id] = { ...T.places[id], time: e.target.value }; savePlace(id, 300); }
+    if (e.target.dataset.mode) { const iso = e.target.dataset.mode; T.days[iso] = { ...(T.days[iso] || {}), mode: e.target.value }; save(tp("days/" + iso), T.days[iso], 0); e.target.blur(); renderTrip(); }
   });
-  // drag and drop between and within days
-  let dragId = null;
-  v.addEventListener("dragstart", e => { const li = e.target.closest(".stop"); if (!li) return; dragId = li.dataset.id; li.classList.add("dragging"); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", dragId); });
-  v.addEventListener("dragend", e => { e.target.closest?.(".stop")?.classList.remove("dragging"); $$(".drop-zone.over").forEach(z => z.classList.remove("over")); });
-  v.addEventListener("dragover", e => { const z = e.target.closest("[data-drop]"); if (!z || !dragId) return; e.preventDefault(); $$(".drop-zone.over").forEach(x => x !== z && x.classList.remove("over")); z.classList.add("over"); });
-  v.addEventListener("drop", e => {
-    const z = e.target.closest("[data-drop]"); if (!z || !dragId) return; e.preventDefault(); z.classList.remove("over");
-    const iso = z.dataset.drop, from = T.places[dragId]?.day;
-    const ids = dayPlaces(iso).map(p => p.id).filter(id => id !== dragId);
-    const after = $$(".stop", z).filter(li => li.dataset.id !== dragId).find(li => e.clientY < li.getBoundingClientRect().top + li.offsetHeight / 2);
-    const at = after ? ids.indexOf(after.dataset.id) : ids.length;
-    ids.splice(at, 0, dragId); reorderDay(iso, ids);
-    if (from && from !== iso) reorderDay(from, dayPlaces(from).map(p => p.id).filter(id => id !== dragId));
-    dragId = null; renderTrip(); renderMap();
-  });
+  // smooth drag and drop (SortableJS): reorder within a day or move to another day
+  if (window.Sortable) $$(".stops[data-drop]", v).forEach(list => Sortable.create(list, {
+    group: "days", animation: 220, easing: "cubic-bezier(.2,.8,.2,1)", draggable: ".stop-wrap",
+    filter: "input, button, select", preventOnFilter: false, delay: 140, delayOnTouchOnly: true, fallbackTolerance: 4,
+    ghostClass: "sort-ghost", chosenClass: "sort-chosen", dragClass: "sort-drag", forceFallback: true, fallbackOnBody: true, scroll: true, scrollSensitivity: 90, bubbleScroll: true,
+    onStart: () => { dragging = true; v.classList.add("is-dragging"); },
+    onEnd: evt => {
+      v.classList.remove("is-dragging");
+      const ids = el => $$(".stop-wrap", el).map(li => li.dataset.id);
+      const to = evt.to.dataset.drop, from = evt.from.dataset.drop;
+      reorderDay(to, ids(evt.to)); if (from !== to) reorderDay(from, ids(evt.from));
+      dragging = false; pendingRender = false;
+      requestAnimationFrame(() => { renderTrip(); renderMap(); });
+    },
+  }));
   if (openAdd && $("#add-" + openAdd)) wireAdd(openAdd);
 }
+function focusDay(iso) { mapFocus = iso; fitPending = true; renderTrip(); renderMap(); }
+
+// ---------------------------------------------------------------- ideas nearby (Wikipedia: popular articles with coordinates near the day)
+let openIdeas = null;
+const ideasCache = {}, ideasWhere = {};
+function ideasCenter(iso) {
+  if (ideasWhere[iso]) return ideasWhere[iso];
+  const pts = dayPlaces(iso).filter(hasPt);
+  const nameOfCenter = list => { const m = {}; list.forEach(p => { const c = p.type === "city" ? p.name : p.city; if (c) m[c] = (m[c] || 0) + 1; }); return Object.entries(m).sort((a, b) => b[1] - a[1])[0]?.[0] || ""; };
+  if (pts.length) return { lat: pts.reduce((a, p) => a + p.lat, 0) / pts.length, lon: pts.reduce((a, p) => a + p.lon, 0) / pts.length, name: nameOfCenter(pts) };
+  const stay = stayFor(iso); if (stay && stay[1].lat != null) return { lat: stay[1].lat, lon: stay[1].lon, name: (stay[1].addr || "").split(",").slice(-1)[0].trim() || stay[1].title };
+  const days = tripDays(), i = days.indexOf(iso);
+  for (let d = 1; d < days.length; d++) for (const j of [i - d, i + d]) { const ps = days[j] ? dayPlaces(days[j]).filter(hasPt) : []; if (ps.length) return { lat: ps[0].lat, lon: ps[0].lon, name: nameOfCenter(ps) }; }
+  return T.trip?.dest && hasPt(T.trip.dest) ? { lat: T.trip.dest.lat, lon: T.trip.dest.lon, name: T.trip.dest.name } : null;
+}
+const SKIP = /\b(station|railway|tube|underground|metro|bus|street|road|avenue|lane|district|ward|constituency|electoral|parish|borough of|area of|neighbourhood|neighborhood|suburb|school|college|university|hospital|company|headquarters|office building|embassy|hotel|apartment|residential|housing|cemetery|bridge over)\b/i;
+function ideaType(desc) {
+  const d = String(desc || "").toLowerCase();
+  if (/museum|gallery/.test(d)) return "museum";
+  if (/market/.test(d)) return "market";
+  if (/park|garden|beach|lake|river|hill|mountain|viewpoint|nature|forest|island/.test(d)) return "nature";
+  if (/theatre|theater|stadium|zoo|aquarium|concert|opera|arena|cinema/.test(d)) return "experience";
+  if (/bookshop|bookstore|department store|shop|store|boutique|mall/.test(d)) return "shop";
+  if (/restaurant/.test(d)) return "food";
+  if (/caf[eé]|bakery|tea room/.test(d)) return "cafe";
+  if (/\bpub\b|\bbar\b|nightclub/.test(d)) return "night";
+  return "sight";
+}
+async function loadIdeas(iso) {
+  const c = ideasCenter(iso), key = c ? `${c.lat.toFixed(3)},${c.lon.toFixed(3)}` : "";
+  if (!c) { ideasCache[iso] = { err: "Add a place to this day (or a destination in Overview) and ideas will show up around it." }; renderTrip(); return; }
+  if (ideasCache[key]) { ideasCache[iso] = { key }; renderTrip(); return; }
+  ideasCache[iso] = { loading: true, key }; renderTrip();
+  try {
+    const u = `https://en.wikipedia.org/w/api.php?action=query&format=json&origin=*&generator=geosearch&ggscoord=${c.lat}|${c.lon}&ggsradius=10000&ggslimit=80&prop=pageimages|description|coordinates|pageviews&piprop=thumbnail&pithumbsize=320&pvipdays=30&pvipmetric=pageviews`;
+    const j = await (await fetch(u)).json();
+    const have = new Set(placeList().map(p => p.name.toLowerCase()));
+    const list = Object.values(j?.query?.pages || {}).map(pg => ({
+      title: pg.title, desc: pg.description || "", thumb: pg.thumbnail?.source || "", lat: pg.coordinates?.[0]?.lat, lon: pg.coordinates?.[0]?.lon,
+      views: Object.values(pg.pageviews || {}).reduce((a, v) => a + (v || 0), 0),
+    })).filter(x => x.lat != null && !SKIP.test(x.desc) && !SKIP.test(x.title) && !/^List of|^\d/.test(x.title) && x.desc && !have.has(x.title.toLowerCase()))
+      .sort((a, b) => b.views - a.views).slice(0, 12);
+    ideasCache[key] = { list, name: c.name }; ideasCache[iso] = { key };
+  } catch { ideasCache[iso] = { err: navigator.onLine ? "Couldn't load ideas right now. Try again in a moment." : "Ideas need an internet connection." }; }
+  if (openIdeas === iso) renderTrip();
+}
+function ideasHtml(iso) {
+  const st = ideasCache[iso] || {}, data = st.key ? ideasCache[st.key] : null, c = ideasCenter(iso);
+  const where = data?.name || c?.name || "here";
+  let body;
+  if (st.err) body = `<p class="hint">${esc(st.err)}</p>`;
+  else if (st.loading || !data) body = `<p class="hint">Finding popular places near ${esc(where)}…</p>`;
+  else if (!data.list.length) body = `<p class="hint">No ideas found near ${esc(where)}. Try another area.</p>`;
+  else body = `<div class="ideas">${data.list.map((x, n) => `<div class="idea">
+      <span class="thumb">${x.thumb ? `<img src="${esc(x.thumb)}" alt="" loading="lazy" onerror="this.remove()">` : esc(x.title.charAt(0))}</span>
+      <span class="info"><b>${esc(x.title)}</b><small>${esc(x.desc)}</small></span>
+      <span class="idea-btns"><button class="btn small" type="button" data-idea="${n}" data-how="day" aria-label="Add ${esc(x.title)} to this day">+ Add</button><button class="btn ghost small" type="button" data-idea="${n}" data-how="save" aria-label="Save ${esc(x.title)} for later">Save</button></span></div>`).join("")}</div>`;
+  return `<div class="ideas-box" data-ideas-for="${iso}"><div class="row between"><h3>Popular near ${esc(where)}</h3><button class="linkbtn" type="button" data-ideas-where="${iso}">Somewhere else?</button></div>${body}<p class="hint" style="font-size:11.5px">Ranked by how often people read about them on Wikipedia.</p></div>`;
+}
+function useIdea(n, how, iso) {
+  const data = ideasCache[ideasCache[iso]?.key]; const x = data?.list?.[+n]; if (!x) return;
+  const id = addPlace({ name: x.title, type: ideaType(x.desc), city: data.name || "", country: "", lat: x.lat, lon: x.lon }, how === "day" ? { day: iso, order: dayPlaces(iso).length, notes: x.desc } : { notes: x.desc });
+  data.list.splice(+n, 1);
+  toast(how === "day" ? `Added ${esc(x.title)} to ${esc(fmtD(iso, { weekday: "short", month: "short", day: "numeric" }))}.` : `Saved ${esc(x.title)} to Places.`);
+  renderTrip(); renderMap();
+}
+function ideasWherePrompt(iso) {
+  const box = $(`[data-ideas-for="${iso}"]`); if (!box) return;
+  box.insertAdjacentHTML("afterbegin", `<div class="suggest-wrap" style="margin-bottom:8px"><input id="iw-${iso}" autocomplete="off" placeholder="Show ideas near… (a city or neighborhood)" role="combobox" aria-expanded="false" aria-controls="iwl-${iso}"><ul class="suggest" id="iwl-${iso}" role="listbox" hidden></ul></div>`);
+  const inp = $("#iw-" + iso); inp.focus();
+  attachSuggest(inp, $("#iwl-" + iso), { onPick: x => { ideasWhere[iso] = { lat: x.lat, lon: x.lon, name: x.name }; loadIdeas(iso); } });
+}
+
 function wireAdd(iso) {
   const inp = $("#add-" + iso), list = $("#addl-" + iso); if (!inp || inp.dataset.wired) return; inp.dataset.wired = "1";
   attachSuggest(inp, list, {
@@ -1012,6 +1113,36 @@ function expenseModal(id) {
   });
 }
 
+// ================================================================ NOTES
+function viewNotes(v) {
+  const notes = Object.entries(T.notes || {}).sort((a, b) => (b[1].pinned ? 1 : 0) - (a[1].pinned ? 1 : 0) || (b[1].updated || b[1].created || 0) - (a[1].updated || a[1].created || 0));
+  v.innerHTML = `<div class="row between"><h2>Notes</h2><button class="btn accent small" type="button" id="addNote">+ New note</button></div>
+    <div class="card note"><div class="row between"><h3>Trip notes</h3><span class="hint">shared with everyone on the trip</span></div>
+      <textarea class="input note-body" id="tripNotes" rows="${Math.min(14, Math.max(3, (T.trip.notes || "").split("\n").length + 1))}" maxlength="5000" placeholder="Ideas, links, things to remember…">${esc(T.trip.notes || "")}</textarea></div>
+    ${notes.map(([id, n]) => `<div class="card note" data-id="${id}">
+      <div class="row" style="gap:6px"><input class="note-title grow" id="nt-${id}" value="${esc(n.title || "")}" placeholder="Title, e.g. Restaurants to try" maxlength="80" aria-label="Note title">
+        <button class="iconbtn" type="button" data-pin aria-pressed="${!!n.pinned}" title="${n.pinned ? "Unpin" : "Pin to top"}" aria-label="${n.pinned ? "Unpin" : "Pin to top"}">${n.pinned ? "★" : "☆"}</button>
+        <button class="iconbtn del" type="button" data-rmnote aria-label="Delete note">×</button></div>
+      <textarea class="input note-body" id="nb-${id}" rows="${Math.min(14, Math.max(3, (n.body || "").split("\n").length + 1))}" maxlength="8000" placeholder="Write anything…">${esc(n.body || "")}</textarea>
+      <span class="hint" style="font-size:11.5px">${n.by ? "By " + esc(nameOf(n.by)) + " · " : ""}${n.updated ? "edited " + esc(new Date(n.updated).toLocaleDateString("en-US", { month: "short", day: "numeric" })) : ""}</span></div>`).join("")}
+    ${notes.length ? "" : `<p class="hint">Add notes for anything: restaurants to try, packing lists, phrases, recommendations from friends.</p>`}`;
+  const upd = debounce(val => updateDoc(doc(fs, "trips/" + cur.id), { notes: val.slice(0, 5000) }).catch(fail), 600);
+  $("#tripNotes").oninput = e => { T.trip.notes = e.target.value; upd(e.target.value); };
+  $("#addNote").onclick = () => { const id = uidGen(); T.notes[id] = { title: "", body: "", by: ME.email, created: Date.now(), updated: Date.now(), pinned: false }; save(tp("notes/" + id), T.notes[id], 0); renderTrip(); $("#nt-" + id)?.focus(); };
+  v.addEventListener("input", e => {
+    const card = e.target.closest(".note[data-id]"); if (!card) return; const id = card.dataset.id;
+    const f = e.target.classList.contains("note-title") ? "title" : e.target.classList.contains("note-body") ? "body" : null; if (!f) return;
+    T.notes[id] = { ...T.notes[id], [f]: e.target.value, updated: Date.now() }; save(tp("notes/" + id), T.notes[id], 700);
+  });
+  const armed = new Set();
+  v.addEventListener("click", e => {
+    const card = e.target.closest(".note[data-id]"); if (!card) return; const id = card.dataset.id;
+    if (e.target.closest("[data-pin]")) { T.notes[id] = { ...T.notes[id], pinned: !T.notes[id].pinned }; save(tp("notes/" + id), T.notes[id], 0); renderTrip(); }
+    const rm = e.target.closest("[data-rmnote]");
+    if (rm) { if (!armed.has(id)) { armed.add(id); rm.textContent = "Delete?"; rm.style.width = "auto"; return; } delete T.notes[id]; remove(tp("notes/" + id)); renderTrip(); }
+  });
+}
+
 // ================================================================ OVERVIEW
 function viewOverview(v) {
   const t = T.trip, days = tripDays(), all = placeList(), sched = all.filter(p => days.includes(p.day)).length;
@@ -1028,10 +1159,10 @@ function viewOverview(v) {
       <div class="grid2"><label class="field" for="ovStart">Start<input id="ovStart" type="date" value="${esc(t.start || "")}"></label><label class="field" for="ovEnd">End<input id="ovEnd" type="date" value="${esc(t.end || "")}"></label></div>
       <div class="grid2"><label class="field" for="ovBudget">Total budget<input id="ovBudget" type="number" min="0" step="50" value="${num(t.budget) || ""}" placeholder="0" data-live></label>
         <label class="field" for="ovCur">Currency<select id="ovCur">${CURRENCIES.map(c => `<option ${c === (t.currency || "USD") ? "selected" : ""}>${c}</option>`).join("")}</select></label></div>
+      <label class="field" for="ovMode">Usually getting around by<select id="ovMode">${Object.entries(MODES).map(([k, m]) => `<option value="${k}" ${k === (t.mode || "walk") ? "selected" : ""}>${m.label}</option>`).join("")}</select></label>
       <div class="row"><button class="btn ghost small" type="button" id="ovCover">New cover photo</button><label class="btn ghost small file-btn">Upload cover<input type="file" id="ovCoverFile" accept="image/*"></label>${t.coverCredit ? `<span class="hint">${esc(t.coverCredit)}</span>` : ""}</div></div>
     <div class="card" style="display:grid;gap:10px"><div class="row between"><h3>People</h3><button class="btn ghost small" type="button" id="ovInvite">Share & invite</button></div>
       ${members().map(e => `<div class="bal">${avatar(e)}<span><b>${esc(nameOf(e))}</b> <span class="hint" style="display:inline">${esc(e)}</span></span><span class="hint">${t.ownerEmail === e ? "Planner" : ""}</span></div>`).join("")}</div>
-    <div class="card" style="display:grid;gap:8px"><h3>Notes</h3><textarea class="input" id="ovNotes" rows="4" maxlength="5000" placeholder="Ideas, links, packing thoughts, anything…" data-live>${esc(t.notes || "")}</textarea></div>
     <div class="card" style="display:grid;gap:8px"><div class="row between"><h3>To-do before we go</h3><span class="hint">${items.filter(([, c]) => c.done).length} of ${items.length} done</span></div>
       <ul class="check">${items.map(([id, c]) => `<li class="${c.done ? "done" : ""}" data-id="${id}"><input type="checkbox" ${c.done ? "checked" : ""} aria-label="Done"><input type="text" id="ck-${id}" value="${esc(c.text || "")}" maxlength="140" data-live aria-label="To-do"><button class="iconbtn del" type="button" data-rm aria-label="Delete">×</button></li>`).join("")}</ul>
       <form id="ckAdd" class="row" style="gap:6px"><input class="input grow" id="ckNew" placeholder="Add a to-do, e.g. Renew passport" maxlength="140" data-live><button class="btn small" type="submit">Add</button></form></div>
@@ -1040,7 +1171,7 @@ function viewOverview(v) {
   const upd = debounce(patch => updateDoc(tripRef, patch).catch(fail), 600);
   $("#ovName").oninput = e => { T.trip.name = e.target.value; upd({ name: e.target.value.slice(0, 60) }); $("#crumb").textContent = e.target.value; };
   $("#ovBudget").oninput = e => { T.trip.budget = num(e.target.value); upd({ budget: num(e.target.value) }); };
-  $("#ovNotes").oninput = e => { T.trip.notes = e.target.value; upd({ notes: e.target.value.slice(0, 5000) }); };
+  $("#ovMode").onchange = e => { updateDoc(tripRef, { mode: e.target.value }).catch(fail); };
   $("#ovCur").onchange = e => { updateDoc(tripRef, { currency: e.target.value }).catch(fail); };
   const dates = () => { let s = $("#ovStart").value, en = $("#ovEnd").value; if (validIso(s) && (!validIso(en) || en < s)) { en = s; $("#ovEnd").value = s; } if (validIso(s) && daysBetween(s, en) > 59) { toast("Trips can be up to 60 days."); return; } updateDoc(tripRef, { start: s, end: en }).catch(fail); };
   $("#ovStart").onchange = dates; $("#ovEnd").onchange = dates;
@@ -1064,7 +1195,7 @@ function viewOverview(v) {
     if (!armed) { armed = true; $("#ovDanger").textContent = isOwner() ? "Tap again to delete for everyone" : "Tap again to leave"; return; }
     const tid = cur.id;
     if (isOwner()) {
-      for (const sub of ["places", "days", "bookings", "expenses", "checklist", "photos"]) { const s = await getDocs(collection(fs, `trips/${tid}/${sub}`)).catch(() => null); s?.docs.forEach(d => deleteDoc(d.ref).catch(() => {})); }
+      for (const sub of ["places", "days", "bookings", "expenses", "checklist", "photos", "notes"]) { const s = await getDocs(collection(fs, `trips/${tid}/${sub}`)).catch(() => null); s?.docs.forEach(d => deleteDoc(d.ref).catch(() => {})); }
       await deleteDoc(doc(fs, "trips/" + tid)).catch(fail);
     } else await updateDoc(doc(fs, "trips/" + tid), { members: members().filter(e => e !== ME.email) }).catch(fail);
     location.hash = "#/";
@@ -1112,6 +1243,12 @@ function setTiles() {
 }
 function destroyMap() { if (map) { map.remove(); map = null; tiles = null; layer = null; } lastFitKey = ""; }
 const icon = (html, cls = "", col = "var(--accent)", size = 26) => L.divIcon({ className: "", html: `<div class="mk ${cls}" style="--mc:${col}">${html}</div>`, iconSize: [size, size], iconAnchor: [size / 2, size / 2], popupAnchor: [0, -size / 2] });
+// map pin with a symbol inside, for stays and bookings
+const GLYPH = {
+  home: '<path d="M8.5 15.5 15 10l6.5 5.5V22h-4.3v-4.2h-4.4V22H8.5z" fill="#fff"/>',
+  star: '<path d="m15 8.8 1.9 3.9 4.3.6-3.1 3 .7 4.3-3.8-2-3.8 2 .7-4.3-3.1-3 4.3-.6z" fill="#fff"/>',
+};
+const pin = (glyph, col) => L.divIcon({ className: "", html: `<svg class="pin" width="30" height="38" viewBox="0 0 30 38" aria-hidden="true"><path d="M15 37s12-12.6 12-22A12 12 0 0 0 3 15c0 9.4 12 22 12 22z" style="fill:${col}" stroke="#fff" stroke-width="2"/>${GLYPH[glyph]}</svg>`, iconSize: [30, 38], iconAnchor: [15, 37], popupAnchor: [0, -34] });
 function popupFor(p) {
   const d = tripDays().includes(p.day) ? dayLabel(p.day) : "Not scheduled";
   return `<b>${esc(p.name)}</b><br><span style="color:var(--muted)">${esc(TYPE[p.type]?.label || "")}${p.city ? " · " + esc(p.city) : ""}</span><br>${esc(d)}${p.time ? " · " + esc(p.time) : ""}`;
@@ -1130,14 +1267,21 @@ function renderMap() {
       items.forEach((p, k) => add(p.lat, p.lon, icon(k + 1, "", col), popupFor(p), p.id));
     });
     if (!mapFocus) placeList().filter(p => hasPt(p) && !days.includes(p.day)).forEach(p => add(p.lat, p.lon, icon("", "dot", "var(--muted)", 16), popupFor(p), p.id));
-    Object.values(T.bookings).forEach(b => { if (b.kind === "lodging" && b.lat != null && (!mapFocus || (b.checkIn <= mapFocus && mapFocus < b.checkOut))) add(b.lat, b.lon, icon("⌂", "home", "var(--ink)"), `<b>${esc(b.title || "Stay")}</b><br>${esc(fmtD(b.checkIn))} – ${esc(fmtD(b.checkOut))}`); });
+    Object.values(T.bookings).forEach(b => { if (b.kind === "lodging" && b.lat != null && (!mapFocus || (b.checkIn <= mapFocus && mapFocus < b.checkOut))) add(b.lat, b.lon, pin("home", "var(--d3)"), `<b>${esc(b.title || "Stay")}</b><br>${esc(fmtD(b.checkIn))} – ${esc(fmtD(b.checkOut))}`); });
   } else if (tab === "places") {
     placeList().filter(hasPt).filter(p => (!PF.type || p.type === PF.type) && (!PF.city || p.city === PF.city)).forEach(p => add(p.lat, p.lon, icon("", "dot", TYPE[p.type].col, 16), popupFor(p), p.id));
   } else if (tab === "bookings") {
-    Object.values(T.bookings).forEach(b => { if (b.lat != null) add(b.lat, b.lon, icon(b.kind === "lodging" ? "⌂" : "★", "home", (KINDS[b.kind] || KINDS.other).col), `<b>${esc(b.title || "")}</b>`); });
+    Object.values(T.bookings).forEach(b => { if (b.lat != null) add(b.lat, b.lon, pin(b.kind === "lodging" ? "home" : "star", (KINDS[b.kind] || KINDS.other).col), `<b>${esc(b.title || "")}</b>`); });
     placeList().filter(hasPt).forEach(p => add(p.lat, p.lon, icon("", "dot", "var(--muted)", 12), popupFor(p), p.id));
   } else {
     placeList().filter(hasPt).forEach(p => add(p.lat, p.lon, icon("", "dot", TYPE[p.type].col, 14), popupFor(p), p.id));
+  }
+  const chips = $("#mapDays");
+  if (chips) {
+    const withPlaces = days.map((iso, i) => [iso, i, dayPlaces(iso).filter(hasPt).length]).filter(x => x[2]);
+    chips.hidden = !(tab === "plan" || tab === "overview") || !withPlaces.length;
+    chips.innerHTML = `<button type="button" class="${!mapFocus ? "on" : ""}" data-mday="">All days</button>` + withPlaces.map(([iso, i, n]) => `<button type="button" class="${mapFocus === iso ? "on" : ""}" data-mday="${iso}" style="--mc:${dayCol(i)}" title="${esc(dayLabel(iso))} · ${n} place${n === 1 ? "" : "s"}"><i></i>Day ${i + 1}</button>`).join("");
+    chips.onclick = e => { const b = e.target.closest("[data-mday]"); if (!b) return; focusDay(b.dataset.mday || null); if (b.dataset.mday && cur.tab === "plan") document.getElementById("day-" + b.dataset.mday)?.scrollIntoView({ block: "start", behavior: reduceMotion() ? "auto" : "smooth" }); };
   }
   const key = tab + "|" + (mapFocus || "") + "|" + pts.length;
   if (fitPending || key !== lastFitKey) {
