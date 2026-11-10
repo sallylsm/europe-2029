@@ -1,6 +1,6 @@
 {
-  "name": "Trips",
-  "short_name": "Trips",
+  "name": "Wayfinder",
+  "short_name": "Wayfinder",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",

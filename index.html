@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Trips</title>
+<title>Wayfinder</title>
 <script>
 try { const t = JSON.parse(localStorage.getItem("e29-theme") || "{}"), m = t.mode || "auto";
   document.documentElement.dataset.accent = t.accent || "lehua";
@@ -18,7 +18,7 @@ try { const t = JSON.parse(localStorage.getItem("e29-theme") || "{}"), m = t.mod
 <link rel="apple-touch-icon" href="icon-192.png">
 <meta name="theme-color" content="#1A2430">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-title" content="Trips">
+<meta name="apple-mobile-web-app-title" content="Wayfinder">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
@@ -30,11 +30,11 @@ try { const t = JSON.parse(localStorage.getItem("e29-theme") || "{}"), m = t.mod
 <body>
 <header class="top">
   <a class="iconbtn back" id="backBtn" href="#/" aria-label="Back to your trips" title="Back to your trips" hidden>←</a>
-  <a class="brand" href="#/"><i>T</i>Trips</a>
+  <a class="brand" href="#/" aria-label="Wayfinder, your trips"><span class="brand-logo" aria-hidden="true"></span></a>
   <span class="crumb" id="crumb"></span>
   <span class="grow"></span>
   <span class="layout-seg" id="layoutSeg" role="group" aria-label="Map size" hidden></span>
-  <a class="iconbtn help-btn" id="helpBtn" href="#/help" aria-label="How to use Trips" title="How to use Trips">?</a>
+  <a class="iconbtn help-btn" id="helpBtn" href="#/help" aria-label="How to use Wayfinder" title="How to use Wayfinder">?</a>
   <div class="menu-wrap">
     <button class="iconbtn" id="meBtn" type="button" aria-expanded="false" aria-controls="mePop" aria-label="Account and theme"><span class="avatar" id="meAv">?</span></button>
     <div class="pop" id="mePop" hidden>
@@ -45,6 +45,8 @@ try { const t = JSON.parse(localStorage.getItem("e29-theme") || "{}"), m = t.mod
       <div class="font-pick" id="fontPick"></div>
       <h3>Mode</h3>
       <div class="seg" id="modeSeg"><button type="button" data-mode="auto">Auto</button><button type="button" data-mode="light">Light</button><button type="button" data-mode="dark">Dark</button></div>
+      <h3>Map labels</h3>
+      <div class="seg" id="labelSeg"><button type="button" data-labels="en">English</button><button type="button" data-labels="both">Both</button><button type="button" data-labels="local">Local</button></div>
       <button class="btn ghost small" id="signOut" type="button">Sign out</button>
     </div>
   </div>

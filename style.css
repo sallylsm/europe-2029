@@ -84,7 +84,7 @@ input[type="checkbox"] { width: 17px; height: 17px; accent-color: var(--leaf); c
 
 /* top bar */
 .top { position: sticky; top: 0; z-index: 30; display: flex; align-items: center; gap: 14px; padding: 10px 18px; background: color-mix(in srgb, var(--paper) 88%, transparent); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line); }
-.brand { display: flex; align-items: center; gap: 9px; font: 650 19px var(--f-display); color: var(--ink); text-decoration: none; }
+.brand { display: flex; align-items: center; gap: 9px; flex: none; font: 650 19px var(--f-display); color: var(--ink); text-decoration: none; }
 .brand i { width: 26px; height: 26px; border-radius: 8px; background: var(--accent); display: grid; place-items: center; color: var(--on-accent); font: 700 14px var(--f-body); font-style: normal; }
 .crumb { font-weight: 700; color: var(--muted); font-size: 14px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .avatar { width: 30px; height: 30px; border-radius: 50%; display: inline-grid; place-items: center; font-weight: 800; font-size: 12px; color: #fff; background: var(--av, var(--t3)); border: 2px solid var(--surface); flex: none; }
@@ -605,3 +605,9 @@ details summary { cursor: pointer; padding: 6px 0; }
 .dir-legs { margin: 4px 0 0; padding-left: 20px; display: grid; gap: 6px; font-size: 13px; }
 .dir-legs li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 10px; }
 .dir-links { display: inline-flex; gap: 2px; }
+
+/* logo: drawn in the current text color, so it works in light and dark mode */
+.brand-logo { display: block; width: 112px; height: 32px; background: var(--ink); -webkit-mask: url(logo.png) left center / contain no-repeat; mask: url(logo.png) left center / contain no-repeat; }
+.brand:hover .brand-logo { background: var(--accent); }
+.brand-logo.big { width: 210px; height: 60px; margin: 0 auto 4px; }
+@media (max-width: 480px) { .brand-logo { width: 92px; height: 27px; } }
