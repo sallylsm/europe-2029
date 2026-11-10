@@ -114,12 +114,29 @@ function fail(e) {
 const tp = sub => `trips/${cur.id}/${sub}`;
 
 // ---------------------------------------------------------------- theme
-let theme = { accent: "lehua", mode: "auto" };
+// font pairs; each loads from Google Fonts only when used
+const FONTS = {
+  clean: { label: "Clean", d: '"Plus Jakarta Sans"', b: '"Plus Jakarta Sans"', q: "Plus+Jakarta+Sans:wght@400;500;600;700;800" },
+  rounded: { label: "Rounded", d: '"Nunito"', b: '"Nunito"', q: "Nunito:wght@400;500;600;700;800" },
+  modern: { label: "Modern", d: '"Outfit"', b: '"DM Sans"', q: "Outfit:wght@500;600;700&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700" },
+  editorial: { label: "Editorial", d: '"Playfair Display"', b: '"Source Sans 3"', q: "Playfair+Display:wght@600;700&family=Source+Sans+3:wght@400;500;600;700" },
+  classic: { label: "Classic", d: '"Fraunces"', b: '"Manrope"', q: "Fraunces:opsz,wght@9..144,500;9..144,650&family=Manrope:wght@400;500;600;700;800" },
+  system: { label: "System", d: "", b: "", q: "" },
+};
+function loadFont(k) {
+  const f = FONTS[k]; if (!f || !f.q || document.querySelector(`link[data-font="${k}"]`)) return;
+  const l = document.createElement("link"); l.rel = "stylesheet"; l.dataset.font = k; l.href = `https://fonts.googleapis.com/css2?family=${f.q}&display=swap`; document.head.append(l);
+}
+let theme = { accent: "lehua", mode: "auto", font: "clean" };
 try { theme = { ...theme, ...JSON.parse(localStorage.getItem("e29-theme") || "{}") }; } catch {}
 const darkMQ = matchMedia("(prefers-color-scheme: dark)");
 function applyTheme() {
   const r = document.documentElement, dark = theme.mode === "auto" ? darkMQ.matches : theme.mode === "dark";
   r.dataset.accent = theme.accent; r.dataset.theme = dark ? "dark" : "light";
+  const f = FONTS[theme.font] || FONTS.clean, sys = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif';
+  loadFont(theme.font);
+  r.style.setProperty("--f-display", f.d ? `${f.d}, ${sys}` : sys); r.style.setProperty("--f-body", f.b ? `${f.b}, ${sys}` : sys);
+  $$("#fontPick button").forEach(b => b.setAttribute("aria-pressed", b.dataset.font === theme.font));
   $$("#swatches button").forEach(b => b.setAttribute("aria-pressed", b.dataset.accent === theme.accent));
   $$("#modeSeg button").forEach(b => b.setAttribute("aria-pressed", b.dataset.mode === theme.mode));
   setTiles(); if (cur) renderMap();
@@ -127,11 +144,12 @@ function applyTheme() {
 $("#swatches").innerHTML = Object.entries(ACCENTS).map(([k, [l, d]]) => `<button type="button" data-accent="${k}" aria-label="${k}" title="${k[0].toUpperCase() + k.slice(1)}" style="background:linear-gradient(135deg,${l} 50%,${d} 50%)"></button>`).join("");
 $("#mePop").addEventListener("click", e => {
   e.stopPropagation();
-  const a = e.target.closest("[data-accent]"), m = e.target.closest("[data-mode]");
-  if (a) theme.accent = a.dataset.accent; if (m) theme.mode = m.dataset.mode;
-  if (a || m) { try { localStorage.setItem("e29-theme", JSON.stringify(theme)); } catch {} applyTheme(); }
+  const a = e.target.closest("[data-accent]"), m = e.target.closest("[data-mode]"), fo = e.target.closest("[data-font]");
+  if (a) theme.accent = a.dataset.accent; if (m) theme.mode = m.dataset.mode; if (fo) theme.font = fo.dataset.font;
+  if (a || m || fo) { try { localStorage.setItem("e29-theme", JSON.stringify(theme)); } catch {} applyTheme(); }
 });
-$("#meBtn").addEventListener("click", e => { e.stopPropagation(); const p = $("#mePop"); p.hidden = !p.hidden; $("#meBtn").setAttribute("aria-expanded", String(!p.hidden)); });
+$("#fontPick").innerHTML = Object.entries(FONTS).map(([k, f]) => `<button type="button" data-font="${k}" style="font-family:${f.b ? f.b + "," : ""}system-ui,sans-serif"><b style="font-family:${f.d ? f.d + "," : ""}system-ui,sans-serif">Aa</b>${f.label}</button>`).join("");
+$("#meBtn").addEventListener("click", e => { e.stopPropagation(); Object.keys(FONTS).forEach(loadFont); const p = $("#mePop"); p.hidden = !p.hidden; $("#meBtn").setAttribute("aria-expanded", String(!p.hidden)); });
 document.addEventListener("click", () => { $("#mePop").hidden = true; $("#meBtn").setAttribute("aria-expanded", "false"); });
 darkMQ.addEventListener?.("change", applyTheme);
 $("#signOut").addEventListener("click", () => signOut(auth));
@@ -1351,14 +1369,17 @@ function viewPacking(v) {
     <div class="meter"><i style="width:${st.total ? st.done / st.total * 100 : 0}%;background:var(--leaf)"></i></div>
     <div class="row"><button class="btn ghost small" type="button" id="pkGroup">+ New section</button>${st.done ? `<button class="btn ghost small" type="button" id="pkReset" title="For packing up to go home">Uncheck everything</button>` : ""}</div>
     <div class="packs">${P.groups.map((g, gi) => { const n = g.items.filter(i => i.done).length; return `<div class="card pack" data-g="${gi}">
-      <div class="row" style="gap:4px;flex-wrap:nowrap"><input class="note-title grow" value="${esc(g.name)}" data-gname aria-label="Section name" maxlength="40"><span class="hint">${n}/${g.items.length}</span><button class="iconbtn del" type="button" data-gdel aria-label="Delete section">×</button></div>
-      <ul class="check">${g.items.map((it, ii) => `<li class="${it.done ? "done" : ""}" data-i="${ii}"><input type="checkbox" ${it.done ? "checked" : ""} aria-label="Packed"><input type="text" value="${esc(it.text)}" maxlength="80" aria-label="Item"><button class="iconbtn del" type="button" data-idel aria-label="Remove item">×</button></li>`).join("")}</ul>
-      <form class="row pk-add" style="gap:6px"><input class="input grow" placeholder="Add an item" maxlength="80" aria-label="Add to ${esc(g.name)}"><button class="btn small" type="submit">Add</button></form></div>`; }).join("")}</div>`;
+      <div class="pk-head"><input class="note-title" value="${esc(g.name)}" data-gname aria-label="Section name" maxlength="40"><span class="pk-count ${g.items.length && n === g.items.length ? "all" : ""}">${n}/${g.items.length}</span><button class="iconbtn del" type="button" data-gdel aria-label="Delete section ${esc(g.name)}">×</button></div>
+      <ul class="check">${g.items.map((it, ii) => `<li class="${it.done ? "done" : ""}" data-i="${ii}"><input type="checkbox" ${it.done ? "checked" : ""} aria-label="Packed"><textarea class="pk-text" rows="1" maxlength="80" aria-label="Item">${esc(it.text)}</textarea><button class="iconbtn del" type="button" data-idel aria-label="Remove item">×</button></li>`).join("")}</ul>
+      <form class="pk-add"><input class="input" placeholder="Add an item" maxlength="80" aria-label="Add to ${esc(g.name)}"><button class="btn small" type="submit">Add</button></form></div>`; }).join("")}</div>`;
+  const grow = el => { el.style.height = "auto"; el.style.height = el.scrollHeight + "px"; };
+  v.addEventListener("keydown", e => { if (e.target.classList?.contains("pk-text") && e.key === "Enter") { e.preventDefault(); e.target.blur(); } });
+  $$(".pk-text", v).forEach(grow);
   const G = gi => T.packing.groups[+gi];
   v.addEventListener("change", e => { const c = e.target.closest(".pack"), li = e.target.closest("li[data-i]"); if (c && li && e.target.type === "checkbox") { G(c.dataset.g).items[+li.dataset.i].done = e.target.checked; savePack(250); li.classList.toggle("done", e.target.checked); renderSide(); } });
   v.addEventListener("input", e => { const c = e.target.closest(".pack"); if (!c) return; const li = e.target.closest("li[data-i]");
     if (e.target.matches("[data-gname]")) { G(c.dataset.g).name = e.target.value; savePack(600); }
-    else if (li && e.target.type === "text") { G(c.dataset.g).items[+li.dataset.i].text = e.target.value; savePack(600); } });
+    else if (li && e.target.classList.contains("pk-text")) { grow(e.target); G(c.dataset.g).items[+li.dataset.i].text = e.target.value; savePack(600); } });
   const armed = new Set();
   v.addEventListener("click", e => { const c = e.target.closest(".pack");
     if (c && e.target.closest("[data-idel]")) { G(c.dataset.g).items.splice(+e.target.closest("li").dataset.i, 1); savePack(0); renderTrip(); }
