@@ -8,6 +8,9 @@
 try { const t = JSON.parse(localStorage.getItem("e29-theme") || "{}"), m = t.mode || "auto";
   document.documentElement.dataset.accent = t.accent || "lehua";
   document.documentElement.dataset.theme = m === "auto" ? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : m;
+  var F = { clean: ["Plus Jakarta Sans", "Plus Jakarta Sans", "Plus+Jakarta+Sans:wght@400;500;600;700;800"], rounded: ["Nunito", "Nunito", "Nunito:wght@400;500;600;700;800"], modern: ["Outfit", "DM Sans", "Outfit:wght@500;600;700&family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700"], editorial: ["Playfair Display", "Source Sans 3", "Playfair+Display:wght@600;700&family=Source+Sans+3:wght@400;500;600;700"], classic: ["Fraunces", "Manrope", "Fraunces:opsz,wght@9..144,500;9..144,650&family=Manrope:wght@400;500;600;700;800"] }[t.font || "clean"];
+  if (F) { var sys = 'system-ui, -apple-system, "Segoe UI", Roboto, sans-serif'; document.documentElement.style.setProperty("--f-display", '"' + F[0] + '", ' + sys); document.documentElement.style.setProperty("--f-body", '"' + F[1] + '", ' + sys);
+    document.write('<link rel="stylesheet" data-font="' + (t.font || "clean") + '" href="https://fonts.googleapis.com/css2?family=' + F[2] + '&display=swap">'); }
 } catch (e) { document.documentElement.dataset.theme = "light"; }
 </script>
 <link rel="manifest" href="manifest.webmanifest">
@@ -18,7 +21,7 @@ try { const t = JSON.parse(localStorage.getItem("e29-theme") || "{}"), m = t.mod
 <meta name="apple-mobile-web-app-title" content="Trips">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,650&family=Manrope:wght@400;500;600;700;800&family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;600&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <link rel="stylesheet" href="style.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
@@ -37,6 +40,8 @@ try { const t = JSON.parse(localStorage.getItem("e29-theme") || "{}"), m = t.mod
       <div><b id="meName"></b><div class="hint" id="meEmail"></div></div>
       <h3>Color</h3>
       <div class="swatches" id="swatches"></div>
+      <h3>Font</h3>
+      <div class="font-pick" id="fontPick"></div>
       <h3>Mode</h3>
       <div class="seg" id="modeSeg"><button type="button" data-mode="auto">Auto</button><button type="button" data-mode="light">Light</button><button type="button" data-mode="dark">Dark</button></div>
       <button class="btn ghost small" id="signOut" type="button">Sign out</button>

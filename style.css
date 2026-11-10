@@ -3,7 +3,7 @@
   --paper: #EEF2F1; --surface: #FFFFFF; --ink: #1A2430; --muted: #66717D; --line: #D8DFE2;
   --accent: #D9483B; --accent-soft: #F8DCD6; --leaf: #2E7A66; --leaf-soft: #DCEDE6; --warn: #B7791F; --warn-soft: #F7E7C8;
   --on-accent: #FFFFFF;
-  --f-display: "Fraunces", Georgia, serif; --f-body: "Manrope", system-ui, -apple-system, "Segoe UI", sans-serif; --f-mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  --f-display: "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", sans-serif; --f-body: "Plus Jakarta Sans", system-ui, -apple-system, "Segoe UI", sans-serif; --f-mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
   --t0: #B5476B; --t1: #C2610F; --t2: #8A5A2B; --t3: #2461B5; --t4: #7646B3; --t5: #3B7A39; --t6: #B7791F; --t7: #5B3FA0; --t8: #107A74; --t9: #5E6B78; --t10: #1A2430;
   --d0: #D9483B; --d1: #2461B5; --d2: #3B7A39; --d3: #7646B3; --d4: #C2610F; --d5: #107A74; --d6: #BE3674; --d7: #8A5A2B;
   color-scheme: light;
@@ -36,7 +36,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 [hidden] { display: none !important; }
 a { color: var(--accent); }
-h1, h2 { font-family: var(--f-display); font-weight: 650; margin: 0; text-wrap: balance; }
+h1, h2 { font-family: var(--f-display); font-weight: 700; margin: 0; text-wrap: balance; letter-spacing: -0.01em; }
 h1 { font-size: 30px; line-height: 1.1; }
 h2 { font-size: 21px; line-height: 1.2; }
 h3 { font-size: 11.5px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); margin: 0; font-weight: 800; }
@@ -280,8 +280,26 @@ input[type="checkbox"] { width: 17px; height: 17px; accent-color: var(--leaf); c
 /* to-do & packing */
 .check.todo li { grid-template-columns: auto minmax(0, 1fr) auto; }
 .ck-due, .ck-who { border: 1px solid var(--line); border-radius: 6px; padding: 3px 5px; background: var(--surface); font-size: 12px; max-width: 120px; }
-.packs { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; align-items: start; }
-.pack { display: grid; gap: 6px; }
+.packs { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; align-items: start; }
+.pack { display: grid; gap: 4px; align-content: start; min-width: 0; padding: 14px 14px 12px; }
+.pk-head { display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 6px; align-items: center; }
+.pk-head .note-title { width: 100%; font-size: 17px; }
+.pk-count { font: 600 11.5px var(--f-mono); color: var(--muted); background: var(--paper); border-radius: 99px; padding: 2px 8px; }
+.pk-count.all { background: var(--leaf-soft); color: var(--leaf); }
+.pack .check li { grid-template-columns: auto minmax(0, 1fr) auto; align-items: start; gap: 8px; padding: 3px 4px; }
+.pack .check li input[type="checkbox"] { margin-top: 3px; }
+.pk-text { border: 0; background: transparent; resize: none; width: 100%; min-width: 0; font: inherit; line-height: 1.4; padding: 1px 2px; overflow: hidden; field-sizing: content; color: var(--ink); }
+.pk-text:focus { outline: none; box-shadow: inset 0 -1px 0 var(--accent); }
+.pack .check li.done .pk-text { text-decoration: line-through; color: var(--muted); }
+.pack .check li .del { opacity: 0; transition: opacity .12s; }
+.pack .check li:hover .del, .pack .check li:focus-within .del { opacity: 1; }
+@media (hover: none) { .pack .check li .del { opacity: .55; } }
+.pk-add { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px; margin-top: 4px; }
+.pk-add .input { padding: 7px 10px; font-size: 13.5px; }
+.font-pick { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; }
+.font-pick button { display: grid; justify-items: center; gap: 2px; border: 1px solid var(--line); background: var(--surface); border-radius: 9px; padding: 6px 4px; cursor: pointer; font-size: 11.5px; color: var(--muted); font-weight: 600; }
+.font-pick button b { font-size: 19px; color: var(--ink); font-weight: 700; line-height: 1.1; }
+.font-pick button[aria-pressed="true"] { border-color: var(--ink); box-shadow: inset 0 0 0 1px var(--ink); color: var(--ink); }
 .map-days { position: absolute; top: 10px; left: 56px; right: 10px; z-index: 500; display: flex; gap: 6px; overflow-x: auto; padding: 2px; scrollbar-width: none; }
 .map-days button { flex: none; display: inline-flex; gap: 6px; align-items: center; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 99px; padding: 5px 11px; font-size: 12.5px; font-weight: 700; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.14); }
 .map-days button i { width: 9px; height: 9px; border-radius: 50%; background: var(--mc); }
