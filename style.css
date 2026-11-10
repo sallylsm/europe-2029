@@ -119,7 +119,7 @@ input[type="checkbox"] { width: 17px; height: 17px; accent-color: var(--leaf); c
 .trip-new:hover { border-color: var(--accent); color: var(--accent); }
 
 /* trip layout */
-.trip { display: grid; grid-template-columns: minmax(420px, 46%) minmax(0, 1fr); height: calc(100vh - 53px); }
+.trip { display: grid; grid-template-columns: 216px minmax(420px, 42%) minmax(0, 1fr); height: calc(100vh - 53px); }
 .panel, .view, .day, .day-body { min-width: 0; }
 .panel { overflow-y: auto; border-right: 1px solid var(--line); background: var(--paper); }
 .mapwrap { position: relative; z-index: 0; isolation: isolate; }
@@ -223,11 +223,65 @@ input[type="checkbox"] { width: 17px; height: 17px; accent-color: var(--leaf); c
 .layout-seg button { border: 0; background: transparent; padding: 4px 10px; font-size: 12px; font-weight: 700; color: var(--muted); cursor: pointer; }
 .layout-seg button + button { border-left: 1px solid var(--line); }
 .layout-seg button[aria-pressed="true"] { background: var(--ink); color: var(--paper); }
-.trip.layout-list { grid-template-columns: minmax(0, 1fr); }
+.trip.layout-list { grid-template-columns: 216px minmax(0, 1fr); }
 .trip.layout-list .mapwrap { display: none; }
 .trip.layout-list .panel { border-right: 0; }
 .trip.layout-list .view { max-width: 1100px; width: 100%; margin: 0 auto; }
-.trip.layout-map { grid-template-columns: minmax(360px, 30%) minmax(0, 1fr); }
+.trip.layout-map { grid-template-columns: 216px minmax(360px, 30%) minmax(0, 1fr); }
+.trip.pp-on.layout-split { grid-template-columns: 216px minmax(760px, 58%) minmax(0, 1fr); }
+.trip.pp-on.layout-map { grid-template-columns: 216px minmax(700px, 50%) minmax(0, 1fr); }
+/* sidebar */
+.side { overflow-y: auto; border-right: 1px solid var(--line); background: var(--surface); padding: 12px 8px 40px; }
+.side nav { display: grid; gap: 2px; }
+.side-item { display: flex; align-items: center; gap: 6px; padding: 8px 10px; border-radius: 9px; color: var(--ink); text-decoration: none; font-weight: 700; font-size: 14px; }
+.side-item:hover { background: var(--paper); }
+.side-item.on { background: var(--accent-soft); color: var(--accent); }
+.side-item > span:first-child { flex: 1; }
+.side-n { font: 600 11px var(--f-mono); color: var(--muted); background: var(--paper); border-radius: 99px; padding: 1px 7px; }
+.side-item.on .side-n { background: var(--surface); }
+.side-caret { border: 0; background: transparent; color: var(--muted); cursor: pointer; padding: 0 4px; font-size: 12px; }
+.side-sub { display: grid; gap: 1px; margin: 2px 0 6px 12px; padding-left: 8px; border-left: 1px solid var(--line); }
+.side-day { display: flex; align-items: center; gap: 8px; border: 0; background: transparent; text-align: left; padding: 5px 8px; border-radius: 7px; cursor: pointer; font-size: 13px; color: var(--muted); font-weight: 600; }
+.side-day > span:first-of-type { flex: 1; }
+.side-day i { width: 8px; height: 8px; border-radius: 50%; background: var(--dc); flex: none; }
+.side-day:hover { background: var(--paper); color: var(--ink); }
+.side-day.on { color: var(--ink); background: var(--paper); }
+/* saved places beside the itinerary */
+.plan-split { display: grid; grid-template-columns: 260px minmax(0, 1fr); gap: 14px; align-items: start; }
+.plan-days { display: grid; gap: 16px; min-width: 0; }
+.pp { position: sticky; top: 52px; max-height: calc(100vh - 130px); overflow-y: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 12px; display: grid; gap: 8px; align-content: start; }
+.pp-head { display: flex; justify-content: space-between; align-items: baseline; }
+.pp-seg { grid-template-columns: 1fr 1fr; }
+.pp-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; min-height: 40px; }
+.pp-item { display: grid; grid-template-columns: 40px minmax(0, 1fr); gap: 8px; align-items: center; padding: 6px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); cursor: grab; user-select: none; -webkit-user-select: none; }
+.pp-item:hover { border-color: var(--tc); }
+.pp-item .thumb { width: 40px; height: 32px; border-radius: 6px; background: var(--paper); overflow: hidden; display: grid; place-items: center; font: 650 15px var(--f-display); color: var(--tc); }
+.pp-item .thumb img { width: 100%; height: 100%; object-fit: cover; }
+.pp-item .info { display: grid; min-width: 0; }
+.pp-item b { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pp-item small { font-size: 11.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stops .pp-item { grid-template-columns: 54px minmax(0, 1fr); padding: 8px; }
+.stops .pp-item .thumb { width: 54px; height: 42px; }
+/* explore */
+.ex-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; }
+.ex { background: var(--surface); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; display: grid; grid-template-rows: auto 1fr; }
+.ex-img { position: relative; aspect-ratio: 16 / 10; background: linear-gradient(135deg, color-mix(in srgb, var(--tc) 20%, var(--surface)), var(--paper)); display: grid; place-items: center; }
+.ex-img img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.ex-img > span:first-child { font: 650 40px var(--f-display); color: var(--tc); opacity: .6; }
+.ex-body { padding: 10px 12px 12px; display: grid; gap: 3px; align-content: start; }
+.ex-body b { font-weight: 800; line-height: 1.25; }
+.ex-body small { color: var(--muted); font-size: 12.5px; }
+.ex-day { border: 1px solid var(--line); border-radius: 7px; padding: 5px 6px; background: var(--surface); font-size: 12.5px; max-width: 150px; }
+/* exchange rate row */
+.fx-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; padding: 8px 10px; border-radius: 9px; background: var(--paper); }
+.fx-row input { width: 110px; border: 1px solid var(--line); border-radius: 7px; padding: 5px 7px; background: var(--surface); }
+.fx-row b { margin-left: auto; }
+.fx-row .hint { flex-basis: 100%; font-size: 11.5px; }
+/* to-do & packing */
+.check.todo li { grid-template-columns: auto minmax(0, 1fr) auto; }
+.ck-due, .ck-who { border: 1px solid var(--line); border-radius: 6px; padding: 3px 5px; background: var(--surface); font-size: 12px; max-width: 120px; }
+.packs { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; align-items: start; }
+.pack { display: grid; gap: 6px; }
 .map-days { position: absolute; top: 10px; left: 56px; right: 10px; z-index: 500; display: flex; gap: 6px; overflow-x: auto; padding: 2px; scrollbar-width: none; }
 .map-days button { flex: none; display: inline-flex; gap: 6px; align-items: center; border: 1px solid var(--line); background: var(--surface); color: var(--ink); border-radius: 99px; padding: 5px 11px; font-size: 12.5px; font-weight: 700; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.14); }
 .map-days button i { width: 9px; height: 9px; border-radius: 50%; background: var(--mc); }
@@ -321,9 +375,20 @@ input[type="checkbox"] { width: 17px; height: 17px; accent-color: var(--leaf); c
 .map-legend span { display: inline-flex; gap: 5px; align-items: center; cursor: pointer; }
 .map-legend i { width: 10px; height: 10px; border-radius: 50%; background: var(--mc); }
 
+@media (min-width: 1101px) { .tabs { display: none; } }
+@media (max-width: 1100px) {
+  .side { display: none; }
+  .trip { grid-template-columns: minmax(420px, 46%) minmax(0, 1fr); }
+  .trip.layout-list { grid-template-columns: minmax(0, 1fr); }
+  .trip.layout-map { grid-template-columns: minmax(360px, 34%) minmax(0, 1fr); }
+  .trip.pp-on.layout-split, .trip.pp-on.layout-map { grid-template-columns: minmax(640px, 62%) minmax(0, 1fr); }
+}
 @media (max-width: 960px) {
   .layout-seg { display: none; }
-  .trip, .trip.layout-map, .trip.layout-list { grid-template-columns: minmax(0, 1fr); height: auto; }
+  .pp-toggle { display: none; }
+  .plan-split { grid-template-columns: minmax(0, 1fr); }
+  .plan-split .pp { display: none; }
+  .trip, .trip.layout-map, .trip.layout-list, .trip.pp-on.layout-split, .trip.pp-on.layout-map { grid-template-columns: minmax(0, 1fr); height: auto; }
   .trip.layout-list .mapwrap { display: none; }
   body.show-map .trip .mapwrap { display: block; }
   .panel { border-right: 0; overflow: visible; }
