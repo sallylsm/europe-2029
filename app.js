@@ -169,6 +169,18 @@ const isOwner = () => T.trip && ME && T.trip.owner === ME.uid;
 
 // ---------------------------------------------------------------- money
 const homeCur = () => T.trip?.currency || "USD";
+// a trip can go to several places (countries, regions or cities); older trips have one "dest"
+const tripDests = t => (t?.dests?.length ? t.dests : t?.dest ? [t.dest] : []).filter(Boolean);
+const destLabel = t => tripDests(t).map(d => d.name).join(" · ");
+const destOf = x => ({ name: x.name, country: x.country || "", lat: x.lat ?? null, lon: x.lon ?? null });
+// chips editor for destinations: search adds one, × removes it
+function destEditor(input, list, box, getList, setList) {
+  const paint = () => { box.innerHTML = getList().map((d, i) => `<span class="dchip">${esc(d.name)}${d.country && d.country !== d.name ? `<span class="hint">${esc(d.country)}</span>` : ""}<button type="button" data-rd="${i}" aria-label="Remove ${esc(d.name)}">×</button></span>`).join("") || `<span class="hint">None yet</span>`; };
+  paint();
+  attachSuggest(input, list, { onPick: x => { const l = getList(); if (!l.some(d => d.name === x.name && d.country === x.country)) setList([...l, destOf(x)]); input.value = ""; paint(); input.focus(); } });
+  box.addEventListener("click", e => { const r = e.target.closest("[data-rd]"); if (!r) return; const l = getList().slice(); l.splice(+r.dataset.rd, 1); setList(l); paint(); });
+  return paint;
+}
 function fmtCur(n, c, cents) {
   try { return new Intl.NumberFormat("en-US", { style: "currency", currency: c, maximumFractionDigits: cents ? 2 : 0, minimumFractionDigits: cents ? 2 : 0 }).format(n || 0); }
   catch { return c + " " + (+n || 0).toFixed(cents ? 2 : 0); }
@@ -476,7 +488,7 @@ function renderHome(err) {
     <div class="trip-grid">
       ${list.map(([id, t]) => `<a class="trip-card" href="#/t/${id}">
         <div class="trip-cover">${t.cover ? `<img src="${esc(t.cover)}" alt="">` : `<span class="letter">${esc((t.name || "?").charAt(0))}</span>`}<span class="when">${esc(tripWhen(t))}</span></div>
-        <div class="trip-body"><h2>${esc(t.name || "Untitled trip")}</h2><span class="hint">${validIso(t.start) ? `${fmtD(t.start)} – ${fmtD(t.end, { month: "short", day: "numeric", year: "numeric" })}` : "No dates yet"}${t.dest?.name ? " · " + esc(t.dest.name) : ""}</span>
+        <div class="trip-body"><h2>${esc(t.name || "Untitled trip")}</h2><span class="hint">${validIso(t.start) ? `${fmtD(t.start)} – ${fmtD(t.end, { month: "short", day: "numeric", year: "numeric" })}` : "No dates yet"}${destLabel(t) ? " · " + esc(destLabel(t)) : ""}</span>
         <span class="hint">${(t.members || []).length} ${(t.members || []).length === 1 ? "person" : "people"}</span></div></a>`).join("")}
       <button class="trip-new" id="newTrip2" type="button">+ Plan a new trip</button>
     </div></div>`;
@@ -484,23 +496,25 @@ function renderHome(err) {
   $("#importEu") && ($("#importEu").onclick = importEurope);
 }
 function newTripModal() {
-  let dest = null;
+  let dests = [];
   openModal(`<div class="row between"><h2>Plan a new trip</h2><button class="iconbtn" type="button" data-close aria-label="Close">×</button></div>
     <label class="field" for="ntName">Trip name<input id="ntName" maxlength="60" placeholder="e.g. Japan in spring"></label>
-    <div class="field"><label for="ntDest">Where to</label><div class="suggest-wrap"><input id="ntDest" autocomplete="off" placeholder="A city, region or country" role="combobox" aria-expanded="false" aria-controls="ntList"><ul class="suggest" id="ntList" role="listbox" hidden></ul></div></div>
+    <div class="field"><label for="ntDest">Where to <span class="hint" style="display:inline;font-weight:500">(add as many countries or cities as you like)</span></label><div class="dchips" id="ntChips"></div><div class="suggest-wrap"><input id="ntDest" autocomplete="off" placeholder="e.g. Japan, then Hong Kong" role="combobox" aria-expanded="false" aria-controls="ntList"><ul class="suggest" id="ntList" role="listbox" hidden></ul></div></div>
     <div class="grid2"><label class="field" for="ntStart">Start<input id="ntStart" type="date"></label><label class="field" for="ntEnd">End<input id="ntEnd" type="date"></label></div>
     <p class="hint" id="ntMsg">You can change any of this later.</p>
     <div class="row between"><span></span><div class="row"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn accent" type="button" id="ntGo">Create trip</button></div></div>`, m => {
     $$("[data-close]", m).forEach(b => b.onclick = closeModal);
-    attachSuggest($("#ntDest"), $("#ntList"), { onPick: x => { dest = x; $("#ntDest").value = x.name + (x.country && x.country !== x.name ? ", " + x.country : ""); if (!$("#ntName").value) $("#ntName").value = x.name; } });
+    destEditor($("#ntDest"), $("#ntList"), $("#ntChips"), () => dests, l => { dests = l; if (!$("#ntName").dataset.typed) $("#ntName").value = l.map(d => d.name).join(" & ").slice(0, 60); });
+    $("#ntName").oninput = e => { e.target.dataset.typed = e.target.value ? "1" : ""; };
     $("#ntStart").onchange = () => { if (!$("#ntEnd").value || $("#ntEnd").value < $("#ntStart").value) $("#ntEnd").value = addDays($("#ntStart").value, 6); };
     $("#ntGo").onclick = async () => {
-      const name = $("#ntName").value.trim() || dest?.name || "New trip";
+      if ($("#ntDest").value.trim()) { try { const h = (await searchPlaces($("#ntDest").value.trim()))[0]; if (h) dests.push(destOf(h)); } catch {} }
+      const dest = dests[0] || null;
+      const name = $("#ntName").value.trim() || dests.map(d => d.name).join(" & ") || "New trip";
       let start = $("#ntStart").value, end = $("#ntEnd").value;
       if (validIso(start) && (!validIso(end) || end < start)) end = start;
-      if (!dest && $("#ntDest").value.trim()) { try { dest = (await searchPlaces($("#ntDest").value.trim()))[0] || null; } catch {} }
       const id = uidGen();
-      const trip = { name: name.slice(0, 60), dest: dest ? { name: dest.name, country: dest.country, lat: dest.lat, lon: dest.lon } : null, start: start || "", end: end || "",
+      const trip = { name: name.slice(0, 60), dest: dest ? destOf(dest) : null, dests, start: start || "", end: end || "",
         members: [ME.email], names: { [ekey(ME.email)]: ME.name }, owner: ME.uid, ownerEmail: ME.email, created: Date.now(), currency: "USD", budget: 0, notes: "", cover: "" };
       try { await setDoc(doc(fs, "trips/" + id), trip); }
       catch (e) { $("#ntMsg").textContent = e.code === "permission-denied" ? "Your account can't create trips yet. Add your email to tripCreators in the Firebase rules (see the README)." : "Couldn't create the trip. Check your connection."; return; }
@@ -554,7 +568,7 @@ function renderTrip(fromData = false) {
   const range = validIso(t.start) ? `${fmtD(t.start, { month: "short", day: "numeric" })} – ${fmtD(t.end, { month: "short", day: "numeric", year: "numeric" })}` : "Add dates in Overview";
   panel.innerHTML = `<div class="hero">${t.cover ? `<img src="${esc(t.cover)}" alt="">` : ""}
       <div class="hero-btns"><a class="btn small" href="#/t/${cur.id}/print">Export PDF</a><button class="btn small" type="button" id="inviteBtn">Share</button></div>
-      <div class="hero-text"><h1>${esc(t.name || "Untitled trip")}</h1><span class="sub">${esc(range)}${t.dest?.name ? " · " + esc(t.dest.name) : ""} · ${esc(tripWhen(t))}</span><span class="avatars">${members().map(avatar).join("")}</span></div></div>
+      <div class="hero-text"><h1>${esc(t.name || "Untitled trip")}</h1><span class="sub">${esc(range)}${destLabel(t) ? " · " + esc(destLabel(t)) : ""} · ${esc(tripWhen(t))}</span><span class="avatars">${members().map(avatar).join("")}</span></div></div>
     <nav class="tabs" aria-label="Trip sections">${TABS.map(([k, l]) => `<a href="#/t/${cur.id}/${k}" ${cur.tab === k ? 'aria-current="page"' : ""}>${l}</a>`).join("")}</nav>
     <div class="view" id="view"></div>`;
   $("#inviteBtn").onclick = inviteModal;
@@ -637,7 +651,13 @@ function bookingsOn(iso) {
   const out = [];
   for (const [id, b] of Object.entries(T.bookings)) {
     const k = KINDS[b.kind] || KINDS.other;
-    if (k.group === "transport") {
+    if (b.kind === "flight" && b.legs?.length > 1) {
+      const segs = b.legs;
+      segs.forEach((l, i) => {
+        if (l.depDate === iso) out.push({ id, b, t: l.depTime || "", txt: `<b>Flight</b> ${esc(l.num ? l.num + " · " : "")}${esc(l.from || "?")} ${esc(l.depTime || "")} → ${esc(l.to || "?")} ${esc(l.arrTime || "")}${l.arrDate && l.arrDate !== l.depDate ? " (+" + daysBetween(l.depDate, l.arrDate) + ")" : ""}` });
+        else if (l.arrDate === iso && (i === segs.length - 1 || segs[i + 1].depDate !== iso)) out.push({ id, b, t: l.arrTime || "", txt: `<b>Arrive</b> ${esc(l.to || "")} ${esc(l.arrTime || "")}${i < segs.length - 1 ? " · connecting" : ""}` });
+      });
+    } else if (k.group === "transport") {
       if (b.depDate === iso) {
         const route = b.from || b.to ? `${esc(b.from || "?")} ${esc(b.depTime || "")} → ${esc(b.to || "?")} ${esc(b.arrTime || "")}${b.arrDate && b.arrDate !== b.depDate ? " (+" + daysBetween(b.depDate, b.arrDate) + ")" : ""}` : `${esc(b.title || "")}${b.depTime ? " · " + esc(b.depTime) : ""}`;
         out.push({ id, b, t: b.depTime || "", txt: `<b>${esc(k.label)}</b> ${esc(b.num ? b.num + " · " : "")}${route}` });
@@ -1165,7 +1185,7 @@ function bookingCard(id, b) {
     body = `<div class="bk-route"><div class="end"><b>${esc(b.from || "—")}</b><span>${esc(fmtD(b.depDate, { weekday: "short", month: "short", day: "numeric" }))} ${esc(b.depTime || "")}</span></div>
       <div class="mid">${via.length ? `via ${via.map(s => esc(s.at) + (parseDur(s.dur) ? " " + fmtMin(parseDur(s.dur)) : "")).join(", ")}` : (k.group === "car" ? "rental" : "nonstop")}</div>
       <div class="end r"><b>${esc(b.to || "—")}</b><span>${esc(fmtD(b.arrDate, { weekday: "short", month: "short", day: "numeric" }))} ${esc(b.arrTime || "")}${plus}</span></div></div>
-      <div class="bk-facts">${b.num ? `<span>${k.group === "car" ? "Company" : "Number"} <b>${esc(b.num)}</b></span>` : ""}${b.seats ? `<span>Seats <b>${esc(b.seats)}</b></span>` : ""}${wait ? `<span>Layovers <b>${fmtMin(wait)}</b></span>` : ""}${conf}${money_}</div>`;
+      <div class="bk-facts">${b.legs?.length > 1 ? `<span>Flights <b>${esc(b.legs.map(l => l.num).filter(Boolean).join(", ") || "—")}</b></span>` : b.num ? `<span>${k.group === "car" ? "Company" : "Number"} <b>${esc(b.num)}</b></span>` : ""}${b.seats ? `<span>Seats <b>${esc(b.seats)}</b></span>` : ""}${wait ? `<span>Layovers <b>${fmtMin(wait)}</b></span>` : ""}${conf}${money_}</div>`;
   } else if (k.group === "lodging") {
     const nights = validIso(b.checkIn) && validIso(b.checkOut) ? daysBetween(b.checkIn, b.checkOut) : 0;
     body = `<div class="bk-route"><div class="end"><b style="font-size:15px">${esc(fmtD(b.checkIn, { weekday: "short", month: "short", day: "numeric" }) || "—")}</b><span>Check in ${esc(b.checkInTime || "")}</span></div><div class="mid">${nights ? nights + " night" + (nights === 1 ? "" : "s") : ""}</div><div class="end r"><b style="font-size:15px">${esc(fmtD(b.checkOut, { weekday: "short", month: "short", day: "numeric" }) || "—")}</b><span>Check out ${esc(b.checkOutTime || "")}</span></div></div>
@@ -1178,16 +1198,23 @@ function bookingCard(id, b) {
 }
 function bookingModal(id, kind, prefill = {}) {
   const b = id ? T.bookings[id] : { kind, split: members(), ...prefill };
+  // flights are edited as legs; an older flight with layovers is split into legs (times in between left blank)
+  let legs = b.legs?.length ? b.legs.map(l => ({ ...l })) : (() => {
+    const names = [b.from || "", ...(b.stops || []).map(x => x.at), b.to || ""];
+    return names.slice(0, -1).map((f, i, arr) => ({ from: f, to: names[i + 1], num: i ? "" : b.num || "", seat: i ? "" : b.seats || "",
+      depDate: i ? "" : b.depDate || "", depTime: i ? "" : b.depTime || "", arrDate: i === arr.length - 1 ? b.arrDate || "" : "", arrTime: i === arr.length - 1 ? b.arrTime || "" : "" }));
+  })();
   let k = b.kind || "flight", stops = (b.stops || []).map(s => ({ ...s })), loc = b.lat != null ? { lat: b.lat, lon: b.lon } : null, armed = false;
   const fld = (key, label, type = "text", ph = "", extra = "") => `<label class="field" for="bm-${key}">${label}<input id="bm-${key}" data-k="${key}" type="${type}" value="${esc(b[key] ?? "")}" placeholder="${esc(ph)}" ${extra}></label>`;
   openModal(`<div class="row between"><h2>${id ? "Edit booking" : "Add a booking"}</h2><button class="iconbtn" type="button" data-close aria-label="Close">×</button></div>
     <label class="field" for="bm-kind">Kind<select id="bm-kind">${Object.entries(KINDS).map(([key, x]) => `<option value="${key}" ${key === k ? "selected" : ""}>${x.label}</option>`).join("")}</select></label>
     ${fld("title", "Title", "text", "e.g. Honolulu → London, Hotel Arts, Dinner at Dishoom", 'maxlength="80"')}
-    <div data-g="transport car" class="grid2">${fld("from", "From", "text", "HNL or a station", 'maxlength="50"')}${fld("to", "To", "text", "LHR", 'maxlength="50"')}</div>
-    <div data-g="transport car" class="grid2">${fld("depDate", "Departs", "date")}${fld("depTime", "Time", "time")}</div>
-    <div data-g="transport car" class="grid2">${fld("arrDate", "Arrives", "date")}${fld("arrTime", "Time", "time")}</div>
-    <div data-g="transport car" class="grid2">${fld("num", "Flight / train number or company", "text", "AS 841", 'maxlength="30"')}${fld("seats", "Seats", "text", "32A, 32B", 'maxlength="30"')}</div>
-    <div data-g="transport" class="field"><span>Layovers</span><div class="stops-ed" id="bmStops"></div><button class="linkbtn" type="button" id="bmAddStop" style="justify-self:start">+ Add a layover</button></div>
+    <div data-nf data-g="transport car" class="grid2">${fld("from", "From", "text", "HNL or a station", 'maxlength="50"')}${fld("to", "To", "text", "LHR", 'maxlength="50"')}</div>
+    <div data-nf data-g="transport car" class="grid2">${fld("depDate", "Departs", "date")}${fld("depTime", "Time", "time")}</div>
+    <div data-nf data-g="transport car" class="grid2">${fld("arrDate", "Arrives", "date")}${fld("arrTime", "Time", "time")}</div>
+    <div data-nf data-g="transport car" class="grid2">${fld("num", "Flight / train number or company", "text", "AS 841", 'maxlength="30"')}${fld("seats", "Seats", "text", "32A, 32B", 'maxlength="30"')}</div>
+    <div data-nf data-g="transport" class="field"><span>Layovers</span><div class="stops-ed" id="bmStops"></div><button class="linkbtn" type="button" id="bmAddStop" style="justify-self:start">+ Add a layover</button></div>
+    <div data-g="flight" class="field"><span>Flights</span><div class="legs-ed" id="bmLegs"></div><button class="linkbtn" type="button" id="bmAddLeg" style="justify-self:start">+ Add a connecting flight</button></div>
     <div data-g="lodging" class="grid2">${fld("checkIn", "Check in", "date")}${fld("checkInTime", "Time", "time")}</div>
     <div data-g="lodging" class="grid2">${fld("checkOut", "Check out", "date")}${fld("checkOutTime", "Time", "time")}</div>
     <div data-g="event" class="grid2">${fld("date", "Date", "date")}${fld("time", "Time", "time")}</div>
@@ -1203,10 +1230,33 @@ function bookingModal(id, kind, prefill = {}) {
     <label class="field" for="bm-notes">Notes<textarea id="bm-notes" data-k="notes" rows="2" maxlength="600">${esc(b.notes || "")}</textarea></label>
     <div class="row between">${id ? `<button class="btn danger" type="button" id="bmDel">Delete</button>` : "<span></span>"}<div class="row"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn accent" type="button" id="bmSave">Save</button></div></div>`, m => {
     $$("[data-close]", m).forEach(x => x.onclick = closeModal);
-    const groupShow = () => { const g = (KINDS[k] || KINDS.other).group; $$("[data-g]", m).forEach(el => el.hidden = !el.dataset.g.split(" ").includes(g)); };
+    const groupShow = () => { const g = (KINDS[k] || KINDS.other).group; $$("[data-g]", m).forEach(el => { const gs = el.dataset.g.split(" "); el.hidden = !(gs.includes(g) || gs.includes(k)) || (k === "flight" && el.hasAttribute("data-nf")); }); };
+    const lf = (i, f, label, type = "text", ph = "", extra = "") => `<label class="field">${label}<input class="input" data-li="${i}" data-lf="${f}" type="${type}" value="${esc(legs[i][f] || "")}" placeholder="${ph}" ${extra}></label>`;
+    const paintLegs = () => {
+      $("#bmLegs").innerHTML = legs.map((l, i) => {
+        const g = i ? gapMins(legs[i - 1], l) : null;
+        return `${i ? `<div class="leg-lay">Layover in <b>${esc(l.from || "?")}</b>${g != null ? (g > 0 ? " · " + fmtMin(g) : " · the next flight leaves before this one lands") : ""}</div>` : ""}
+        <div class="leg-ed"><div class="row between"><b>Flight ${i + 1}</b>${legs.length > 1 ? `<button class="iconbtn del" type="button" data-rl="${i}" aria-label="Remove flight ${i + 1}">×</button>` : ""}</div>
+          <div class="grid3">${lf(i, "from", "From", "text", "ITO", 'maxlength="50"')}${lf(i, "to", "To", "text", "HNL", 'maxlength="50"')}${lf(i, "num", "Flight number", "text", "HA 123", 'maxlength="12"')}</div>
+          <div class="grid4">${lf(i, "depDate", "Departs", "date")}${lf(i, "depTime", "Time", "time")}${lf(i, "arrDate", "Arrives", "date")}${lf(i, "arrTime", "Time", "time")}</div>
+          ${lf(i, "seat", "Seats", "text", "32A, 32B", 'maxlength="30"')}</div>`;
+      }).join("");
+    };
+    paintLegs();
+    $("#bmAddLeg").onclick = () => { const p = legs[legs.length - 1]; legs.push({ from: p.to || "", to: "", num: "", seat: "", depDate: p.arrDate || p.depDate || "", depTime: "", arrDate: "", arrTime: "" }); paintLegs(); $(`[data-li="${legs.length - 1}"][data-lf="to"]`, m)?.focus(); };
+    $("#bmLegs").addEventListener("input", e => { const i = e.target.dataset.li; if (i == null) return; legs[+i][e.target.dataset.lf] = e.target.value.trim(); });
+    $("#bmLegs").addEventListener("change", e => {
+      const i = e.target.dataset.li; if (i == null) return; const l = legs[+i], f = e.target.dataset.lf;
+      if (f === "depDate" && !l.arrDate) l.arrDate = l.depDate;
+      if (f === "to" && legs[+i + 1] && !legs[+i + 1].from) legs[+i + 1].from = l.to;
+      if (f === "arrDate" && legs[+i + 1] && !legs[+i + 1].depDate) legs[+i + 1].depDate = l.arrDate;
+      const keep = document.activeElement?.dataset; paintLegs();
+      if (keep?.li != null) $(`[data-li="${keep.li}"][data-lf="${keep.lf}"]`, m)?.focus();
+    });
+    $("#bmLegs").addEventListener("click", e => { const r = e.target.closest("[data-rl]"); if (r) { legs.splice(+r.dataset.rl, 1); paintLegs(); } });
     const paintStops = () => { $("#bmStops").innerHTML = stops.map((s, i) => `<div class="stop-ed"><input class="input" data-si="${i}" data-sf="at" value="${esc(s.at || "")}" placeholder="Airport / station" aria-label="Layover place"><input class="input" data-si="${i}" data-sf="dur" value="${esc(s.dur || "")}" placeholder="2h 30m" aria-label="Layover length"><button class="iconbtn del" type="button" data-rs="${i}" aria-label="Remove layover">×</button></div>`).join(""); };
     groupShow(); paintStops();
-    const fx = rateWidget(m, { amt: "#bm-cost", cur: "#bm-costCur", rate: "#bm-rate", row: "#bmFx", out: "#bmOut", lab: "#bmLab", home: "#bmHome", src: "#bmSrc" }, () => $("#bm-depDate").value || $("#bm-checkIn").value || $("#bm-date").value);
+    const fx = rateWidget(m, { amt: "#bm-cost", cur: "#bm-costCur", rate: "#bm-rate", row: "#bmFx", out: "#bmOut", lab: "#bmLab", home: "#bmHome", src: "#bmSrc" }, () => (k === "flight" ? legs[0]?.depDate : "") || $("#bm-depDate").value || $("#bm-checkIn").value || $("#bm-date").value);
     if ($("#bm-costCur").value !== homeCur() && !$("#bm-rate").value) fx.fetchRate();
     $("#bm-kind").onchange = e => { k = e.target.value; groupShow(); };
     $("#bmAddStop").onclick = () => { stops.push({ at: "", dur: "" }); paintStops(); $(`[data-si="${stops.length - 1}"]`, m)?.focus(); };
@@ -1223,6 +1273,13 @@ function bookingModal(id, kind, prefill = {}) {
       if (out.cost && !out.costRate) { $("#bm-rate").focus(); $("#bmSrc").textContent = `Add the exchange rate from ${out.costCur} to ${homeCur()} to save.`; return; }
       out.planned = $("#bm-planned").checked; out.split = $$("[data-split]", m).filter(x => x.checked).map(x => x.value);
       out.stops = (KINDS[k] || KINDS.other).group === "transport" ? stops.filter(s => (s.at || "").trim()) : [];
+      if (k === "flight") {
+        const L2 = legs.filter(l => l.from || l.to || l.num || l.depDate);
+        if (!L2.length) L2.push({ from: "", to: "", num: "", seat: "", depDate: "", depTime: "", arrDate: "", arrTime: "" });
+        const f0 = L2[0], fl = L2[L2.length - 1];
+        Object.assign(out, { legs: L2, from: f0.from, to: fl.to, depDate: f0.depDate, depTime: f0.depTime, arrDate: fl.arrDate, arrTime: fl.arrTime, num: f0.num, seats: [...new Set(L2.map(l => l.seat).filter(Boolean))].join(" / "),
+          stops: L2.slice(1).map((l, i) => { const g = gapMins(L2[i], l); return { at: l.from || L2[i].to, dur: g > 0 ? fmtMin(g) : "" }; }) });
+      }
       out.lat = loc?.lat ?? null; out.lon = loc?.lon ?? null;
       if (!out.title) out.title = out.from && out.to ? `${out.from} → ${out.to}` : (KINDS[k] || KINDS.other).label;
       out.created = b.created || Date.now();
@@ -1271,7 +1328,8 @@ function arc(a, b, n = 48) {
 const apIcon = (code, kind) => L.divIcon({ className: "", html: `<div class="ap-mk ${kind}">${esc(code)}</div>`, iconSize: [40, 20], iconAnchor: kind === "via" ? [20, 28] : [20, 10], popupAnchor: [0, -10] });
 // draws one flight (with its layovers) on the map; returns the points for fitting the view
 function drawFlight(b, color) {
-  const legs = flightLegsOf(b), pts = [];
+  const segs = flightSegs(b), names = b.legs?.length ? [segs[0].from, ...segs.map(l => l.to)] : [b.from, ...(b.stops || []).map(x => x.at), b.to];
+  const legs = names.map(airportOf), pts = [];
   let prev = null, prevLon = 0;   // previous airport, and the longitude it was drawn at
   legs.forEach((ap, i) => {
     if (!ap) return;
@@ -1282,13 +1340,24 @@ function drawFlight(b, color) {
       L.polyline(line, { color, weight: 2.5, opacity: .9, dashArray: "7 7" }).addTo(layer);
       lon = line[line.length - 1][1];
     }
-    const kind = i === 0 ? "dep" : i === legs.length - 1 ? "arr" : "via", st = (b.stops || [])[i - 1];
-    const pop = `<b>${esc(ap.code)}</b> · ${esc(ap.name)}<br><span style="color:var(--muted)">${esc(ap.city || "")}</span><br>${kind === "dep" ? `Depart ${esc(fmtD(b.depDate))} ${esc(b.depTime || "")}` : kind === "arr" ? `Arrive ${esc(fmtD(b.arrDate))} ${esc(b.arrTime || "")}` : `Layover${st && parseDur(st.dur) ? " " + fmtMin(parseDur(st.dur)) : ""}`}`;
-    L.marker([ap.lat, lon], { icon: apIcon(ap.code, kind), keyboard: true }).addTo(layer).bindPopup(pop);
+    const kind = i === 0 ? "dep" : i === legs.length - 1 ? "arr" : "via";
+    const inn = b.legs?.length ? segs[i - 1] : null, out = b.legs?.length ? segs[i] : null, st = (b.stops || [])[i - 1];
+    const when = (l, w) => l ? `${w} ${esc(fmtD(w === "Depart" ? l.depDate : l.arrDate))} ${esc((w === "Depart" ? l.depTime : l.arrTime) || "")}${l.num && w === "Depart" ? " · " + esc(l.num) : ""}` : "";
+    let line2;
+    if (kind === "dep") line2 = out ? when(out, "Depart") : `Depart ${esc(fmtD(b.depDate))} ${esc(b.depTime || "")}`;
+    else if (kind === "arr") line2 = inn ? when(inn, "Arrive") : `Arrive ${esc(fmtD(b.arrDate))} ${esc(b.arrTime || "")}`;
+    else if (inn && out) { const g = gapMins(inn, out); line2 = `${when(inn, "Arrive")}<br>${when(out, "Depart")}${g != null && g > 0 ? `<br><b>Layover ${fmtMin(g)}</b>` : ""}`; }
+    else line2 = `Layover${st && parseDur(st.dur) ? " " + fmtMin(parseDur(st.dur)) : ""}`;
+    L.marker([ap.lat, lon], { icon: apIcon(ap.code, kind), keyboard: true }).addTo(layer).bindPopup(`<b>${esc(ap.code)}</b> · ${esc(ap.name)}<br><span style="color:var(--muted)">${esc(ap.city || "")}</span><br>${line2}`);
     pts.push([ap.lat, lon]); prev = ap; prevLon = lon;
   });
   return pts;
 }
+// a flight booking's legs: new bookings store them; older ones are one leg from start to end
+const flightSegs = b => b.legs?.length ? b.legs : [{ from: b.from, to: b.to, num: b.num, depDate: b.depDate, depTime: b.depTime, arrDate: b.arrDate, arrTime: b.arrTime, seat: b.seats }];
+const segDates = b => new Set(flightSegs(b).flatMap(l => [l.depDate, l.arrDate]).filter(validIso));
+// minutes between landing and the next departure (same airport, so the same time zone)
+const gapMins = (a, b) => validIso(a.arrDate) && a.arrTime && validIso(b.depDate) && b.depTime ? Math.round((new Date(`${b.depDate}T${b.depTime}`) - new Date(`${a.arrDate}T${a.arrTime}`)) / 6e4) : null;
 const flightCode = b => { const c = String(b.num || "").toUpperCase().replace(/[\s-]/g, ""); return /^[A-Z0-9]{2}\d{1,4}[A-Z]?$/.test(c) ? c : ""; };
 const trackLinks = code => `<a class="ext" href="https://www.flightaware.com/live/flight/${code}" target="_blank" rel="noopener">FlightAware ↗</a><a class="ext" href="https://www.flightradar24.com/data/flights/${code.toLowerCase()}" target="_blank" rel="noopener">Flightradar24 ↗</a>`;
 // ---- live status (only when a flight-status key is set in config.js)
@@ -1308,26 +1377,40 @@ async function fetchStatus(code, date, from) {
   return { status: f.status || "", depSched: sch(f.departure), dep: t(f.departure), depTerm: f.departure?.terminal || "", depGate: f.departure?.gate || "", arrSched: sch(f.arrival), arr: t(f.arrival), arrTerm: f.arrival?.terminal || "", belt: f.arrival?.baggageBelt || "", at: Date.now() };
 }
 const statusSig = s => [s.status, s.dep, s.depGate, s.depTerm, s.arr, s.belt].join("|");
-function statusHtml(id, b) {
-  const code = flightCode(b); if (!code || b.kind !== "flight") return "";
-  const watching = !!WATCH[id], s = STATUS[id];
+const segOf = key => { const [id, i] = String(key).split(":"); const b = T.bookings[id]; return b ? flightSegs(b)[+i || 0] : WATCH[key]?.b; };
+function legLive(key, l) {
+  const code = flightCode(l); if (!code) return "";
+  const watching = !!WATCH[key], s = STATUS[key];
   let live = "";
-  if (!FLIGHT_KEY) live = `<span class="hint">Live status: see the links, or add a flight-status key (Help → Live flight status).</span>`;
-  else if (!statusWindow(b)) live = `<span class="hint">Live status shows up here in the week of the flight.</span>`;
+  if (!FLIGHT_KEY) live = "";
+  else if (!statusWindow(l)) live = `<span class="hint">Live status shows up in the week of the flight.</span>`;
   else if (s?.err) live = `<span class="hint">${esc(s.err)}</span>`;
   else if (s?.none) live = `<span class="hint">No live data for ${esc(code)} on this date yet.</span>`;
   else if (s) {
     const late = s.dep && s.depSched && s.dep !== s.depSched, cls = /cancel/i.test(s.status) ? "bad" : late || /delay/i.test(s.status) ? "warn" : "ok";
     live = `<span class="st ${cls}">${esc(s.status || "Scheduled")}</span><span>Departs <b>${esc(s.dep || "—")}</b>${late ? ` <s>${esc(s.depSched)}</s>` : ""}${s.depTerm ? " · Terminal " + esc(s.depTerm) : ""}${s.depGate ? " · Gate " + esc(s.depGate) : ""}</span><span>Arrives <b>${esc(s.arr || "—")}</b>${s.belt ? " · Bags belt " + esc(s.belt) : ""}</span><span class="hint">Updated ${new Date(s.at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}</span>`;
-  } else live = `<button class="btn ghost small" type="button" data-stat="${id}">Check status</button>`;
-  return `<div class="bk-live">${live}<span class="grow"></span>${trackLinks(code)}
-    <button class="btn ghost small" type="button" data-watch="${id}" aria-pressed="${watching}">${watching ? "Watching ✓" : "Watch for changes"}</button>
-    <button class="btn ghost small" type="button" data-froute="${id}">Route map</button></div>`;
+  } else live = `<button class="btn ghost small" type="button" data-stat="${key}">Check status</button>`;
+  return `${live}<span class="grow"></span>${trackLinks(code)}<button class="btn ghost small" type="button" data-watch="${key}" aria-pressed="${watching}">${watching ? "Watching ✓" : "Watch for changes"}</button>`;
 }
-async function refreshStatus(id, quiet) {
-  const b = T.bookings[id] || WATCH[id]?.b; if (!b || !FLIGHT_KEY) return;
-  try { const s = await fetchStatus(flightCode(b), b.depDate, b.from); STATUS[id] = s; checkChange(id, b, s); }
-  catch (e) { STATUS[id] = { err: e.message }; if (!quiet) toast(esc(e.message)); }
+function statusHtml(id, b) {
+  if (b.kind !== "flight") return "";
+  const segs = flightSegs(b), multi = segs.length > 1;
+  const rows = segs.map((l, i) => {
+    const g = i ? gapMins(segs[i - 1], l) : null;
+    const lay = i ? `<div class="leg-lay">Layover in <b>${esc(l.from || segs[i - 1].to || "?")}</b>${g != null && g > 0 ? " · " + fmtMin(g) : ""}${g != null && g <= 0 ? " · check the times" : ""}</div>` : "";
+    const head = multi ? `<div class="leg-line"><b>${esc(l.from || "?")} → ${esc(l.to || "?")}</b><span>${esc(fmtD(l.depDate, { weekday: "short", month: "short", day: "numeric" }))} ${esc(l.depTime || "")} → ${l.arrDate && l.arrDate !== l.depDate ? esc(fmtD(l.arrDate, { weekday: "short", month: "short", day: "numeric" })) + " " : ""}${esc(l.arrTime || "")}</span>${l.num ? `<span class="mono">${esc(l.num)}</span>` : ""}${l.seat ? `<span>Seat ${esc(l.seat)}</span>` : ""}</div>` : "";
+    const live = legLive(`${id}:${i}`, l);
+    // several legs: tracking sits on each leg's own row
+    if (multi) return lay + head.replace(/<\/div>$/, live ? `<span class="grow"></span><span class="leg-acts">${live.replace('<span class="grow"></span>', "")}</span></div>` : "</div>");
+    return lay + (live ? `<div class="bk-live">${live}</div>` : "");
+  }).join("");
+  const anyCode = segs.some(l => flightCode(l));
+  return `<div class="bk-legs">${rows}<div class="bk-live">${!FLIGHT_KEY && anyCode ? `<span class="hint">Live status: use the tracking links, or add a flight-status key (Help → Live flight status).</span>` : ""}<span class="grow"></span><button class="btn ghost small" type="button" data-froute="${id}">Route map</button></div></div>`;
+}
+async function refreshStatus(key, quiet) {
+  const l = segOf(key); if (!l || !FLIGHT_KEY) return;
+  try { const s = await fetchStatus(flightCode(l), l.depDate, l.from); STATUS[key] = s; checkChange(key, l, s); }
+  catch (e) { STATUS[key] = { err: e.message }; if (!quiet) toast(esc(e.message)); }
   if (cur?.tab === "bookings") renderTrip();
 }
 function notify(title, body) {
@@ -1344,10 +1427,10 @@ function checkChange(id, b, s) {
   w.sig = sig; saveWatch();
 }
 async function toggleWatch(id) {
-  const b = T.bookings[id]; if (!b) return;
+  const b = segOf(id); if (!b) return;
   if (WATCH[id]) { delete WATCH[id]; saveWatch(); renderTrip(); return; }
   if ("Notification" in window && Notification.permission === "default") { try { await Notification.requestPermission(); } catch {} }
-  WATCH[id] = { b: { num: b.num, depDate: b.depDate, depTime: b.depTime, arrDate: b.arrDate, arrTime: b.arrTime, from: b.from, kind: b.kind }, sig: STATUS[id] && !STATUS[id].none ? statusSig(STATUS[id]) : "" };
+  WATCH[id] = { b: { num: b.num, depDate: b.depDate, depTime: b.depTime, arrDate: b.arrDate, arrTime: b.arrTime, from: b.from }, sig: STATUS[id] && !STATUS[id].none ? statusSig(STATUS[id]) : "" };
   saveWatch(); renderTrip();
   toast(FLIGHT_KEY ? "Watching this flight. While Trips is open, it checks every 10 minutes in the week of the flight and alerts you to changes." : "Saved. Add a flight-status key to get alerts (see Help).");
 }
@@ -1405,7 +1488,7 @@ function tripAreas() {
     const ap = airportOf(b.to); if (!ap) return;
     out.push({ key: "f:" + ap.code + b.arrDate, label: ap.city || ap.code, country: "", lat: ap.lat, lon: ap.lon, from: b.arrDate, to: validIso(b.arrDate) ? addDays(b.arrDate, 1) : "", n: 0, sub: `Where ${b.num || "your flight"} lands (${ap.code})${b.arrDate ? " · " + fmtD(b.arrDate) : ""}`, airport: true });
   });
-  if (!out.length && T.trip?.dest && hasPt(T.trip.dest)) out.push({ key: "d", label: T.trip.dest.name, country: T.trip.dest.country || "", lat: T.trip.dest.lat, lon: T.trip.dest.lon, from: T.trip.start, to: T.trip.end, n: 0, sub: "Trip destination" });
+  if (!out.length) tripDests(T.trip).filter(hasPt).forEach((d, i) => out.push({ key: "d" + i, label: d.name, country: d.country || "", lat: d.lat, lon: d.lon, from: T.trip.start, to: T.trip.end, n: 0, sub: "Trip destination" }));
   return out;
 }
 const distTxt = d => d < 1 ? `${Math.round(d * 1000 / 10) * 10} m` : `${d.toFixed(1)} km`;
@@ -1581,13 +1664,14 @@ function toBooking(r) {
 // flights on one booking with connecting segments become one booking with layovers
 function joinFlights(list) {
   const flights = list.filter(b => b.kind === "flight").sort((a, b) => String(a._dep).localeCompare(String(b._dep))), out = list.filter(b => b.kind !== "flight"), used = new Set();
+  const legOf = f => ({ from: f.from, to: f.to, num: f.num, seat: f.seats || "", depDate: f.depDate, depTime: f.depTime, arrDate: f.arrDate, arrTime: f.arrTime });
   flights.forEach((f, i) => {
-    if (used.has(i)) return; used.add(i); const trip = { ...f, stops: [] }; let last = f;
+    if (used.has(i)) return; used.add(i); const trip = { ...f, stops: [], legs: [legOf(f)] }; let last = f;
     for (let j = i + 1; j < flights.length; j++) {
       const n = flights[j]; if (used.has(j) || n.conf !== f.conf || n.from !== last.to) continue;
       const gap = (new Date(local(n._dep).d + "T" + (local(n._dep).t || "00:00")) - new Date(local(last._arr).d + "T" + (local(last._arr).t || "00:00"))) / 6e4;
       if (!(gap > 0 && gap < 24 * 60)) continue;
-      trip.stops.push({ at: n.from, dur: fmtMin(Math.round(gap)) }); trip.to = n.to; trip.arrDate = n.arrDate; trip.arrTime = n.arrTime; trip.num += " / " + n.num; if (n.cost) { if (!trip.cost) trip.costCur = n.costCur; trip.cost += n.cost; } used.add(j); last = n;
+      trip.stops.push({ at: n.from, dur: fmtMin(Math.round(gap)) }); trip.legs.push(legOf(n)); trip.to = n.to; trip.arrDate = n.arrDate; trip.arrTime = n.arrTime; trip.num += " / " + n.num; if (n.cost) { if (!trip.cost) trip.costCur = n.costCur; trip.cost += n.cost; } used.add(j); last = n;
     }
     if (trip.stops.length) trip.num = trip.num.split(" / ")[0];
     out.push(trip);
@@ -1828,7 +1912,7 @@ async function fetchIdeas(c) {
 function exploreCenters() {
   const m = new Map();
   placeList().filter(hasPt).forEach(p => { const n = p.type === "city" ? p.name : p.city; if (n && !m.has(n)) m.set(n, { name: n, lat: p.lat, lon: p.lon }); });
-  if (T.trip?.dest && hasPt(T.trip.dest) && !m.has(T.trip.dest.name)) m.set(T.trip.dest.name, { ...T.trip.dest });
+  tripDests(T.trip).forEach(d => { if (hasPt(d) && !m.has(d.name)) m.set(d.name, { ...d }); });
   return [...m.values()];
 }
 function viewExplore(v) {
@@ -1953,6 +2037,7 @@ function routeSketch(items, col) {
 }
 function bookingLine(b) {
   const k = KINDS[b.kind] || KINDS.other, g = k.group;
+  if (b.kind === "flight" && b.legs?.length > 1) return b.legs.map(l => `${fmtD(l.depDate, { weekday: "short", month: "short", day: "numeric" }) || "—"} ${esc(l.depTime || "")} ${esc(l.from || "")} → ${esc(l.to || "")} ${esc(l.arrTime || "")}${l.num ? " · " + esc(l.num) : ""}`).join("<br>");
   if (g === "transport" || g === "car") return `${fmtD(b.depDate, { weekday: "short", month: "short", day: "numeric" }) || "—"} ${esc(b.depTime || "")} ${esc(b.from || "")} → ${fmtD(b.arrDate, { weekday: "short", month: "short", day: "numeric" }) || ""} ${esc(b.arrTime || "")} ${esc(b.to || "")}`;
   if (g === "lodging") return `${fmtD(b.checkIn, { weekday: "short", month: "short", day: "numeric" }) || "—"} → ${fmtD(b.checkOut, { weekday: "short", month: "short", day: "numeric" }) || "—"}${validIso(b.checkIn) && validIso(b.checkOut) ? ` · ${daysBetween(b.checkIn, b.checkOut)} nights` : ""}`;
   return `${fmtD(b.date, { weekday: "short", month: "short", day: "numeric" }) || "—"}${b.time ? " · " + esc(b.time) : ""}`;
@@ -1965,7 +2050,7 @@ function printHtml() {
   const spent = real.reduce((a, x) => a + x.amount, 0), planned = plan.reduce((a, x) => a + x.amount, 0), budget = num(t.budget);
   const bkAll = Object.values(T.bookings).sort((a, b) => bkStart(a).localeCompare(bkStart(b)));
   let h = `<section class="pb-cover">${O.photos && t.cover ? `<div class="pb-cover-img"><img src="${esc(t.cover)}" alt=""></div>` : ""}
-    <h1>${esc(t.name || "Trip")}</h1><p class="pb-sub">${esc(range)}${t.dest?.name ? " · " + esc(t.dest.name) : ""}</p>
+    <h1>${esc(t.name || "Trip")}</h1><p class="pb-sub">${esc(range)}${destLabel(t) ? " · " + esc(destLabel(t)) : ""}</p>
     <p class="pb-sub">${members().map(e => esc(nameOf(e))).join(", ")}</p>
     <div class="pb-stats"><div><b>${days.length}</b><span>days</span></div><div><b>${all.filter(p => days.includes(p.day)).length}</b><span>places planned</span></div><div><b>${bkAll.length}</b><span>bookings</span></div><div><b>${money(spent + planned)}</b><span>${budget ? "of " + money(budget) + " budget" : "spent + planned"}</span></div></div>
     ${bkAll.filter(b => (KINDS[b.kind] || KINDS.other).group === "transport").length ? `<h3>Getting there and around</h3><table class="pb-tbl"><tbody>${bkAll.filter(b => (KINDS[b.kind] || KINDS.other).group === "transport").map(b => `<tr><td><b>${esc((KINDS[b.kind] || KINDS.other).label)}</b>${b.num ? " " + esc(b.num) : ""}</td><td>${bookingLine(b)}</td><td>${b.conf ? `Conf. <b>${esc(b.conf)}</b>` : ""}</td></tr>`).join("")}</tbody></table>` : ""}
@@ -2058,7 +2143,7 @@ function viewOverview(v) {
       <div class="stat"><span class="k">Spent</span><span class="v">${money(spent)}</span><span class="s">${num(t.budget) ? "of " + money(num(t.budget)) : "no budget set"}</span></div></div>
     <div class="card" style="display:grid;gap:12px"><h3>Trip details</h3>
       <label class="field" for="ovName">Name<input id="ovName" maxlength="60" value="${esc(t.name || "")}" data-live></label>
-      <div class="field"><label for="ovDest">Destination</label><div class="suggest-wrap"><input id="ovDest" autocomplete="off" value="${esc(t.dest?.name || "")}" placeholder="Search a city, region or country" role="combobox" aria-expanded="false" aria-controls="ovDestL" data-live><ul class="suggest" id="ovDestL" role="listbox" hidden></ul></div></div>
+      <div class="field"><label for="ovDest">Destinations</label><div class="dchips" id="ovChips"></div><div class="suggest-wrap"><input id="ovDest" autocomplete="off" placeholder="Add a country, region or city" role="combobox" aria-expanded="false" aria-controls="ovDestL"><ul class="suggest" id="ovDestL" role="listbox" hidden></ul></div></div>
       <div class="grid2"><label class="field" for="ovStart">Start<input id="ovStart" type="date" value="${esc(t.start || "")}"></label><label class="field" for="ovEnd">End<input id="ovEnd" type="date" value="${esc(t.end || "")}"></label></div>
       <div class="grid2"><label class="field" for="ovBudget">Total budget<input id="ovBudget" type="number" min="0" step="50" value="${num(t.budget) || ""}" placeholder="0" data-live></label>
         <label class="field" for="ovCur">Home currency (totals are shown in)<select id="ovCur">${CURRENCIES.map(c => `<option ${c === (t.currency || "USD") ? "selected" : ""}>${c}</option>`).join("")}</select></label></div>
@@ -2075,7 +2160,7 @@ function viewOverview(v) {
   $("#ovCur").onchange = e => rebaseCurrency(e.target.value);
   const dates = () => { let s = $("#ovStart").value, en = $("#ovEnd").value; if (validIso(s) && (!validIso(en) || en < s)) { en = s; $("#ovEnd").value = s; } if (validIso(s) && daysBetween(s, en) > 59) { toast("Trips can be up to 60 days."); return; } updateDoc(tripRef, { start: s, end: en }).catch(fail); };
   $("#ovStart").onchange = dates; $("#ovEnd").onchange = dates;
-  attachSuggest($("#ovDest"), $("#ovDestL"), { onPick: x => { $("#ovDest").value = x.name; updateDoc(tripRef, { dest: { name: x.name, country: x.country, lat: x.lat, lon: x.lon } }).catch(fail); } });
+  destEditor($("#ovDest"), $("#ovDestL"), $("#ovChips"), () => tripDests(T.trip), l => { T.trip.dests = l; T.trip.dest = l[0] || null; updateDoc(tripRef, { dests: l, dest: l[0] || null }).catch(fail); });
   $("#ovCover").onclick = async () => {
     const d = t.dest || { name: t.name }; $("#ovCover").disabled = true; $("#ovCover").textContent = "Looking…";
     const cands = await photoCandidates({ name: d.name, city: d.name, lat: d.lat, lon: d.lon }, "all").catch(() => []);
@@ -2204,7 +2289,7 @@ function renderMap() {
       items.forEach((p, k) => add(p.lat, p.lon, icon(k + 1, "", col), popupFor(p), p.id));
     });
     // a travel day on its own: show the flight path with its layovers
-    if (mapFocus) { loadAirports(); Object.values(T.bookings).forEach(b => { if (b.kind === "flight" && (b.depDate === mapFocus || b.arrDate === mapFocus)) drawFlight(b, colVal(dayColor(mapFocus, days.indexOf(mapFocus)))).forEach(q => pts.push(q)); }); }
+    if (mapFocus) { loadAirports(); Object.values(T.bookings).forEach(b => { if (b.kind === "flight" && segDates(b).has(mapFocus)) drawFlight(b, colVal(dayColor(mapFocus, days.indexOf(mapFocus)))).forEach(q => pts.push(q)); }); }
     if (!mapFocus) placeList().filter(p => hasPt(p) && !days.includes(p.day)).forEach(p => add(p.lat, p.lon, icon("", "dot", "var(--muted)", 16), popupFor(p), p.id));
     Object.values(T.bookings).forEach(b => { if (b.kind === "lodging" && b.lat != null && (!mapFocus || (b.checkIn <= mapFocus && mapFocus < b.checkOut))) add(b.lat, b.lon, pin("home", "var(--d3)"), `<b>${esc(b.title || "Stay")}</b><br>${esc(fmtD(b.checkIn))} – ${esc(fmtD(b.checkOut))}`); });
   } else if (tab === "places") {
@@ -2222,7 +2307,7 @@ function renderMap() {
   }
   const chips = $("#mapDays");
   if (chips) {
-    const flies = iso => Object.values(T.bookings).some(b => b.kind === "flight" && (b.depDate === iso || b.arrDate === iso));
+    const flies = iso => Object.values(T.bookings).some(b => b.kind === "flight" && segDates(b).has(iso));
     const withPlaces = days.map((iso, i) => [iso, i, dayPlaces(iso).filter(hasPt).length]).filter(x => x[2] || flies(x[0]));
     chips.hidden = !(tab === "plan" || tab === "overview") || !withPlaces.length;
     chips.innerHTML = `<button type="button" class="${!mapFocus ? "on" : ""}" data-mday="">All days</button>` + withPlaces.map(([iso, i, n]) => `<button type="button" class="${mapFocus === iso ? "on" : ""}" data-mday="${iso}" style="--mc:${dayColor(iso, i)}" title="${esc(dayLabel(iso))}${n ? ` · ${n} place${n === 1 ? "" : "s"}` : " · travel day"}"><i></i>Day ${i + 1}${n ? "" : " ✈"}</button>`).join("");
@@ -2231,7 +2316,7 @@ function renderMap() {
   const key = tab + "|" + (mapFocus || "") + "|" + (bkFocus || "") + "|" + BF.kind + "|" + pts.length;
   if (fitPending || key !== lastFitKey) {
     // Leaflet skips a new zoom while one is still animating, so wait for it
-    const fit = () => { if (!map) return; if (pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.15), { maxZoom: 15, animate: !reduceMotion() }); else if (T.trip.dest && hasPt(T.trip.dest)) map.setView([T.trip.dest.lat, T.trip.dest.lon], 6); };
+    const fit = () => { if (!map) return; if (pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.15), { maxZoom: 15, animate: !reduceMotion() }); else { const ds = tripDests(T.trip).filter(hasPt); if (ds.length > 1) map.fitBounds(L.latLngBounds(ds.map(d => [d.lat, d.lon])).pad(0.3), { maxZoom: 6 }); else if (ds.length) map.setView([ds[0].lat, ds[0].lon], 6); } };
     if (map._animatingZoom) map.once("zoomend", () => setTimeout(fit, 0)); else fit();
     fitPending = false; lastFitKey = key;
   }
