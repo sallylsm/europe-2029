@@ -595,3 +595,13 @@ details summary { cursor: pointer; padding: 6px 0; }
 .g-attr { font-size: 11px; color: var(--muted); text-align: right; }
 .suggest li.g-attr { padding: 4px 10px; justify-content: flex-end; }
 .g-rate { color: #B7791F; font-weight: 800; }
+/* how you get to each stop */
+.leg-pick { position: relative; display: inline-flex; align-items: center; gap: 2px; border: 1px solid var(--line); border-radius: 99px; padding: 1px 6px 1px 6px; background: var(--surface); cursor: pointer; font-size: 13px; }
+.leg-pick:hover, .leg-pick:focus-within { border-color: var(--ink); }
+.leg-pick.set { border-color: var(--accent); background: var(--accent-soft); }
+.leg-pick select { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
+.leg-pick::after { content: "▾"; font-size: 9px; color: var(--muted); }
+.mode-pick { flex-wrap: wrap; } .mode-pick .hint { margin-left: 6px; }
+.dir-legs { margin: 4px 0 0; padding-left: 20px; display: grid; gap: 6px; font-size: 13px; }
+.dir-legs li { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 10px; }
+.dir-links { display: inline-flex; gap: 2px; }
