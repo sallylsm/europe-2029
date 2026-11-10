@@ -580,3 +580,18 @@ details summary { cursor: pointer; padding: 6px 0; }
 .leg-acts { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .leg-acts .btn { padding: 4px 9px; font-size: 12px; }
 @media (max-width: 560px) { .leg-ed .grid3 { grid-template-columns: 1fr 1fr; } .leg-ed .grid3 .field:last-child { grid-column: 1 / -1; } }
+/* note bubbles in a day */
+.note-wrap { margin: 2px 0; }
+.dnote { display: grid; grid-template-columns: 14px 18px minmax(0, 1fr) auto auto; gap: 8px; align-items: start; padding: 8px 8px 8px 8px; border-radius: 11px; background: var(--warn-soft); border: 1px solid color-mix(in srgb, var(--warn) 35%, transparent); cursor: grab; touch-action: pan-y; }
+.dnote .grip { padding-top: 4px; color: var(--muted); }
+.dn-ic { color: var(--warn); font-size: 14px; padding-top: 3px; }
+.dnote textarea { border: 0; background: transparent; resize: none; font: inherit; font-size: 14px; line-height: 1.45; color: var(--ink); padding: 2px 0; min-width: 0; width: 100%; overflow: hidden; cursor: text; }
+.dnote textarea:focus { outline: none; }
+.dnote input[type="time"] { border: 0; background: color-mix(in srgb, var(--surface) 60%, transparent); border-radius: 7px; font: inherit; font-size: 12.5px; color: var(--muted); padding: 2px 4px; }
+.dnote .del { opacity: .5; } .dnote:hover .del, .dnote:focus-within .del { opacity: 1; }
+.sort-ghost .dnote { opacity: .35; border-style: dashed; }
+.sort-drag .dnote { box-shadow: 0 14px 34px rgba(0,0,0,.22); transform: rotate(1.2deg); }
+.pb-cnote { list-style: none; margin: 4px 0 4px 30px; padding: 5px 9px; background: #FBF1DC; border-left: 3px solid #C9A227; border-radius: 4px; font-size: 11.5px; }
+.g-attr { font-size: 11px; color: var(--muted); text-align: right; }
+.suggest li.g-attr { padding: 4px 10px; justify-content: flex-end; }
+.g-rate { color: #B7791F; font-weight: 800; }
