@@ -1,6 +1,6 @@
 {
-  "name": "Europe 2029",
-  "short_name": "Europe 2029",
+  "name": "Trips",
+  "short_name": "Trips",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
