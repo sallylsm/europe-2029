@@ -109,7 +109,7 @@ let ME = null;             // { uid, email, name }
 let TRIPS = {};            // id -> trip doc
 let unsubHome = null;
 let cur = null;            // { id, tab, unsubs: [] }
-const T = { trip: null, places: {}, days: {}, bookings: {}, expenses: {}, checklist: {}, photos: {}, notes: {}, packing: null };
+const T = { trip: null, places: {}, days: {}, bookings: {}, expenses: {}, checklist: {}, photos: {}, notes: {}, polls: {}, packing: null };
 const latest = {}, timers = {}, chains = {};
 let oldEurope = null;      // set when the old Europe 2029 data can be read
 
@@ -145,6 +145,7 @@ function loadFont(k) {
   const l = document.createElement("link"); l.rel = "stylesheet"; l.dataset.font = k; l.href = `https://fonts.googleapis.com/css2?family=${f.q}&display=swap`; document.head.append(l);
 }
 let theme = { accent: "lehua", mode: "auto", font: "clean" };
+const useF = () => theme.temp ? theme.temp === "F" : /-(US|LR|MM)$/i.test(navigator.language || "en-US") || !/-/.test(navigator.language || "");   // temperatures in °F for US-style locales
 try { theme = { ...theme, ...JSON.parse(localStorage.getItem("e29-theme") || "{}") }; } catch {}
 const darkMQ = matchMedia("(prefers-color-scheme: dark)");
 function applyTheme() {
@@ -155,6 +156,8 @@ function applyTheme() {
   r.style.setProperty("--f-display", f.d ? `${f.d}, ${sys}` : sys); r.style.setProperty("--f-body", f.b ? `${f.b}, ${sys}` : sys);
   $$("#fontPick button").forEach(b => b.setAttribute("aria-pressed", b.dataset.font === theme.font));
   $$("[data-labels]").forEach(b => b.setAttribute("aria-pressed", b.dataset.labels === (theme.labels || "en")));
+  $$("[data-temp]").forEach(b => b.setAttribute("aria-pressed", b.dataset.temp === (theme.temp || (useF() ? "F" : "C"))));
+  try { if (cur && (cur.tab === "plan" || cur.tab === "today") && T.trip) renderTrip(); } catch {}
   $$("#swatches button").forEach(b => b.setAttribute("aria-pressed", b.dataset.accent === theme.accent));
   $$("#modeSeg button").forEach(b => b.setAttribute("aria-pressed", b.dataset.mode === theme.mode));
   setTiles(); if (cur) renderMap();
@@ -162,11 +165,12 @@ function applyTheme() {
 $("#swatches").innerHTML = Object.entries(ACCENTS).map(([k, [l, d]]) => `<button type="button" data-accent="${k}" aria-label="${k}" title="${k[0].toUpperCase() + k.slice(1)}" style="background:linear-gradient(135deg,${l} 50%,${d} 50%)"></button>`).join("");
 $("#mePop").addEventListener("click", e => {
   e.stopPropagation();
-  const a = e.target.closest("[data-accent]"), m = e.target.closest("[data-mode]"), fo = e.target.closest("[data-font]"), lb = e.target.closest("[data-labels]");
-  if (a) theme.accent = a.dataset.accent; if (m) theme.mode = m.dataset.mode; if (fo) theme.font = fo.dataset.font; if (lb) theme.labels = lb.dataset.labels;
-  if (a || m || fo || lb) { try { localStorage.setItem("e29-theme", JSON.stringify(theme)); } catch {} applyTheme(); }
+  const a = e.target.closest("[data-accent]"), m = e.target.closest("[data-mode]"), fo = e.target.closest("[data-font]"), lb = e.target.closest("[data-labels]"), te = e.target.closest("[data-temp]");
+  if (a) theme.accent = a.dataset.accent; if (m) theme.mode = m.dataset.mode; if (fo) theme.font = fo.dataset.font; if (lb) theme.labels = lb.dataset.labels; if (te) theme.temp = te.dataset.temp;
+  if (a || m || fo || lb || te) { try { localStorage.setItem("e29-theme", JSON.stringify(theme)); } catch {} applyTheme(); }
 });
 $("#fontPick").innerHTML = Object.entries(FONTS).map(([k, f]) => `<button type="button" data-font="${k}" style="font-family:${f.b ? f.b + "," : ""}system-ui,sans-serif"><b style="font-family:${f.d ? f.d + "," : ""}system-ui,sans-serif">Aa</b>${f.label}</button>`).join("");
+$("#loyBtn").addEventListener("click", () => { $("#mePop").hidden = true; loyaltyModal(); });
 $("#meBtn").addEventListener("click", e => { e.stopPropagation(); Object.keys(FONTS).forEach(loadFont); const p = $("#mePop"); p.hidden = !p.hidden; $("#meBtn").setAttribute("aria-expanded", String(!p.hidden)); });
 document.addEventListener("click", () => { $("#mePop").hidden = true; $("#meBtn").setAttribute("aria-expanded", "false"); });
 darkMQ.addEventListener?.("change", applyTheme);
@@ -230,6 +234,7 @@ function money(n, opts = {}) {
 }
 
 // ---------------------------------------------------------------- dates of the trip
+function tripDaysOf(t) { const out = []; if (!validIso(t.start) || !validIso(t.end)) return out; for (let d = t.start; d <= t.end && out.length < 120; d = addDays(d, 1)) out.push(d); return out; }
 function tripDays() {
   const t = T.trip; if (!t || !validIso(t.start) || !validIso(t.end)) return [];
   const n = Math.min(60, Math.max(1, daysBetween(t.start, t.end) + 1));
@@ -538,7 +543,7 @@ onAuthStateChanged(auth, async user => {
   if (!user) { ME = null; unsubHome?.(); leaveTrip(); renderGate(); return; }
   ME = { uid: user.uid, email: (user.email || "").toLowerCase(), name: (user.displayName || "").split(" ")[0] || (user.email || "").split("@")[0] };
   $("#meBtn").hidden = false; $("#meAv").textContent = ME.name.charAt(0).toUpperCase(); $("#meName").textContent = user.displayName || ME.name; $("#meEmail").textContent = ME.email;
-  subscribeHome(); route();
+  subscribeHome(); subscribeLoyalty(); route();
 });
 
 // ================================================================ ROUTING
@@ -547,7 +552,7 @@ function route() {
   if (!ME) return;
   const m = location.hash.match(/^#\/t\/([\w-]+)(?:\/(\w+))?/);
   if (location.hash.startsWith("#/help")) { leaveTrip(); renderHelp(); return; }
-  if (m) openTrip(m[1], m[2] || "plan");
+  if (m) openTrip(m[1], m[2] || (TRIPS[m[1]] && tripDaysOf(TRIPS[m[1]]).includes(isoOf(new Date())) ? "today" : "plan"));
   else { leaveTrip(); renderHome(); }
 }
 
@@ -616,7 +621,7 @@ function newTripModal() {
 }
 
 // ================================================================ TRIP VIEW
-const TABS = [["overview", "Overview"], ["explore", "Explore"], ["notes", "Notes"], ["places", "Places"], ["plan", "Itinerary"], ["bookings", "Bookings"], ["food", "Restaurants"], ["budget", "Budget"], ["todo", "To-do"], ["packing", "Packing"]];
+const TABS = [["today", "Today"], ["overview", "Overview"], ["explore", "Explore"], ["notes", "Notes"], ["places", "Places"], ["plan", "Itinerary"], ["bookings", "Bookings"], ["food", "Restaurants"], ["budget", "Budget"], ["todo", "To-do"], ["packing", "Packing"], ["guide", "Country guide"]];
 function leaveTrip() {
   if (!cur) return;
   cur.unsubs.forEach(u => u()); cur = null;
@@ -638,11 +643,11 @@ function openTrip(id, tab) {
     rerender();
   }, e => { $("#panel").innerHTML = `<div class="view"><p class="banner">${e.code === "permission-denied" ? "You're not a member of this trip. Ask the person who planned it to invite your Google email." : "Couldn't load this trip."}</p><a href="#/">Back to your trips</a></div>`; }));
   cur.unsubs.push(onSnapshot(doc(fs, `users/${ME.uid}/packing/${id}`), s => { if (!latest[`users/${ME.uid}/packing/${id}`]) { T.packing = s.exists() ? { ...s.data() } : { empty: true }; rerender(); } }, () => { T.packing = { empty: true }; }));
-  for (const name of ["places", "days", "bookings", "expenses", "checklist", "photos", "notes"]) {
+  for (const name of ["places", "days", "bookings", "expenses", "checklist", "photos", "notes", "polls"]) {
     cur.unsubs.push(onSnapshot(collection(fs, `trips/${id}/${name}`), snap => {
       const o = {}; snap.docs.forEach(d => { o[d.id] = { ...d.data() }; });
       for (const p of Object.keys(latest)) if (p.startsWith(`trips/${id}/${name}/`)) o[p.split("/").pop()] = latest[p];
-      T[name] = o; rerender();
+      T[name] = o; rerender(); if (name === "bookings") setTimeout(checkReminders, 1500);
     }, () => {}));
   }
 }
@@ -658,12 +663,13 @@ function renderTrip(fromData = false) {
   if (cur.tab === "print") { panel.innerHTML = `<div class="view print-view" id="view"></div>`; viewPrint($("#view")); renderSide(); return; }
   const range = validIso(t.start) ? `${fmtD(t.start, { month: "short", day: "numeric" })} – ${fmtD(t.end, { month: "short", day: "numeric", year: "numeric" })}` : "Add dates in Overview";
   panel.innerHTML = `<div class="hero">${t.cover ? `<img src="${esc(t.cover)}" alt="">` : ""}
-      <div class="hero-btns"><a class="btn small" href="#/t/${cur.id}/print">Export PDF</a><button class="btn small" type="button" id="inviteBtn">Share</button></div>
+      <div class="hero-btns"><button class="btn small" type="button" id="calBtn">Add to calendar</button><a class="btn small" href="#/t/${cur.id}/print">Export PDF</a><button class="btn small" type="button" id="inviteBtn">Share</button></div>
       <div class="hero-text"><h1>${esc(t.name || "Untitled trip")}</h1><span class="sub">${esc(range)}${destLabel(t) ? " · " + esc(destLabel(t)) : ""} · ${esc(tripWhen(t))}</span><span class="avatars">${members().map(avatar).join("")}</span></div></div>
     <nav class="tabs" aria-label="Trip sections">${TABS.map(([k, l]) => `<a href="#/t/${cur.id}/${k}" ${cur.tab === k ? 'aria-current="page"' : ""}>${l}</a>`).join("")}</nav>
     <div class="view" id="view"></div>`;
-  $("#inviteBtn").onclick = inviteModal;
-  ({ plan: viewPlan, places: viewPlaces, bookings: viewBookings, budget: viewBudget, notes: viewNotes, overview: viewOverview, explore: viewExplore, todo: viewTodo, packing: viewPacking, food: viewFood }[cur.tab] || viewPlan)($("#view"));
+  $("#inviteBtn").onclick = inviteModal; $("#calBtn").onclick = calendarModal;
+  ({ plan: viewPlan, places: viewPlaces, bookings: viewBookings, budget: viewBudget, notes: viewNotes, overview: viewOverview, explore: viewExplore, todo: viewTodo, packing: viewPacking, food: viewFood, today: viewToday, guide: viewGuide }[cur.tab] || viewPlan)($("#view"));
+  if (cur.tab === "plan") { loadWeather(); loadHours(); }
   renderSide();
   if (scrollToDay && cur.tab === "plan") { const el = document.getElementById("day-" + scrollToDay); scrollToDay = null; if (el) { el.scrollIntoView({ block: "start", behavior: reduceMotion() ? "auto" : "smooth" }); return; } }
   panel.scrollTop = scroll;
@@ -681,9 +687,10 @@ function renderSide() {
   const item = (k, label, extra = "", count = "") => `<a href="#/t/${cur.id}/${k}" class="side-item ${tab === k ? "on" : ""}" ${tab === k ? 'aria-current="page"' : ""}><span>${label}</span>${count !== "" ? `<span class="side-n">${count}</span>` : ""}${extra}</a>`;
   const caret = k => `<button class="side-caret" type="button" data-caret="${k}" aria-expanded="${!!sideOpen[k]}" aria-label="${sideOpen[k] ? "Collapse" : "Expand"}">${sideOpen[k] ? "▾" : "▸"}</button>`;
   side.innerHTML = `<nav>
+    ${item("today", "Today", "", tripDays().includes(isoOf(new Date())) ? "●" : "")}
     ${item("overview", "Overview")}
     ${item("explore", "Explore")}
-    ${item("notes", "Notes", "", Object.keys(T.notes).length || "")}
+    ${item("notes", "Notes & votes", "", Object.values(T.polls || {}).filter(p => !p.closed && !(p.votes || {})[ekey(ME.email)]).length ? "🗳" : Object.keys(T.notes).length || "")}
     ${item("places", "Places to visit", "", all.length || "")}
     <div class="side-group">${item("plan", "Itinerary", caret("plan"))}
       ${sideOpen.plan ? `<div class="side-sub">${days.map((iso, i) => { const n = dayPlaces(iso).length; return `<button type="button" class="side-day ${mapFocus === iso ? "on" : ""}" data-sday="${iso}" style="--dc:${dayColor(iso, i)}"><i></i><span>${esc(fmtD(iso, { weekday: "short", month: "short", day: "numeric" }))}</span>${n ? `<span class="side-n">${n}</span>` : ""}</button>`; }).join("")}</div>` : ""}</div>
@@ -693,6 +700,7 @@ function renderSide() {
     ${item("budget", "Budget")}
     ${item("todo", "To-do", "", todoOpen || "")}
     ${item("packing", "Packing", "", pk.total ? `${pk.done}/${pk.total}` : "")}
+    ${item("guide", "Country guide")}
     <a href="#/t/${cur.id}/print" class="side-item side-export ${tab === "print" ? "on" : ""}"><span>Export PDF</span></a>
   </nav>`;
   side.onclick = e => {
@@ -836,7 +844,7 @@ function dayHtml(iso, i) {
   return `<section class="day ${focus ? "focus" : ""}" id="day-${iso}" data-day="${iso}" style="--dc:${dayColor(iso, i)}">
     <div class="day-head" data-focus="${iso}" role="button" tabindex="0" aria-pressed="${focus}" aria-label="Show only ${esc(dayLabel(iso))} on the map">
       <button class="day-dot" type="button" data-dcolor="${iso}" aria-expanded="${openColor === iso}" aria-label="Change the color of ${esc(dayLabel(iso))}" title="Change this day's color"></button><div class="grow"><h2>${esc(fmtD(iso, { weekday: "long", month: "long", day: "numeric" }))}</h2>
-      <span class="meta">Day ${i + 1}${travelDay ? " · Travel day" : ""}${items.length ? ` · ${items.length} place${items.length === 1 ? "" : "s"}` : ""}${total ? ` · ${total.toFixed(1)} km · about ${fmtMin(mins)}${how}` : ""}</span></div>
+      <span class="meta">${wxChip(iso)}Day ${i + 1}${travelDay ? " · Travel day" : ""}${items.length ? ` · ${items.length} place${items.length === 1 ? "" : "s"}` : ""}${total ? ` · ${total.toFixed(1)} km · about ${fmtMin(mins)}${how}` : ""}</span></div>
       ${focus ? `<span class="pill accent">Only this day on map</span>` : ""}</div>
     <div class="day-body">
       ${openColor === iso ? `<div class="day-colors" role="group" aria-label="Day color">${DAYPAL.map(([hx, nm]) => `<button type="button" data-setcol="${iso}" data-c="${hx}" style="--sw:${hx}" aria-pressed="${T.days[iso]?.color === hx}" title="${nm}" aria-label="${nm}"></button>`).join("")}<button type="button" class="linkbtn" data-setcol="${iso}" data-c="">Default</button></div>` : ""}
@@ -848,8 +856,8 @@ function dayHtml(iso, i) {
           <div class="stop" style="--tc:${TYPE[p.type].col}">
             <span class="grip" aria-hidden="true">⋮⋮</span><span class="num">${k + 1}</span>
             <span class="thumb">${photoSrcOf(p) ? `<img src="${esc(photoSrcOf(p))}" alt="" loading="lazy" draggable="false" onerror="this.remove()">` : esc(p.name.charAt(0))}</span>
-            <span class="info"><span class="nm">${esc(p.name)}</span><span class="sub"><span>${esc(TYPE[p.type].label)}${p.city && p.city !== p.name ? " · " + esc(p.city) : ""}</span><input type="time" id="tm-${p.id}" data-time="${p.id}" value="${esc(p.time || "")}" aria-label="Time for ${esc(p.name)}"></span></span>
-            <span class="acts"><button class="iconbtn" type="button" data-up="${p.id}" aria-label="Move ${esc(p.name)} up">↑</button><button class="iconbtn" type="button" data-down="${p.id}" aria-label="Move ${esc(p.name)} down">↓</button><button class="iconbtn" type="button" data-edit="${p.id}" aria-label="Edit ${esc(p.name)}">✎</button><button class="iconbtn del" type="button" data-unsched="${p.id}" aria-label="Remove ${esc(p.name)} from this day">×</button></span>
+            <span class="info"><span class="nm">${esc(p.name)}</span><span class="sub"><span>${esc(TYPE[p.type].label)}${p.city && p.city !== p.name ? " · " + esc(p.city) : ""}</span><input type="time" id="tm-${p.id}" data-time="${p.id}" value="${esc(p.time || "")}" aria-label="Time for ${esc(p.name)}">${hoursBadge(p, iso)}</span></span>
+            <span class="acts">${commentsOf(p).length ? cmtBtn(p) : ""}<button class="iconbtn" type="button" data-up="${p.id}" aria-label="Move ${esc(p.name)} up">↑</button><button class="iconbtn" type="button" data-down="${p.id}" aria-label="Move ${esc(p.name)} down">↓</button><button class="iconbtn" type="button" data-edit="${p.id}" aria-label="Edit ${esc(p.name)}">✎</button><button class="iconbtn del" type="button" data-unsched="${p.id}" aria-label="Remove ${esc(p.name)} from this day">×</button></span>
           </div></li>`; })()).join("")}</ol>
       ${photos.length ? `<div class="row" style="gap:6px">${photos.map(([, ph]) => `<img src="${esc(ph.data)}" alt="Trip photo" data-zoom style="width:64px;height:48px;object-fit:cover;border-radius:7px;cursor:zoom-in">`).join("")}</div>` : ""}
       ${stay ? `<div class="bk-mini"><b>Staying at</b> ${esc(stay[1].title || "your stay")}</div>` : pts.length ? `<button class="linkbtn find-stay" type="button" data-findstay="c:${esc((pts[0].city || "Day " + (i + 1)).trim())}">No stay booked for this night · Find one nearby</button>` : ""}
@@ -1204,7 +1212,7 @@ function placeCard(p) {
         <select data-pday aria-label="Schedule ${esc(p.name)}">${dayOptions(tripDays().includes(p.day) ? p.day : "")}</select><span class="grow"></span>
         ${hasPt(p) ? `<button class="ext" type="button" data-locate style="border:0;background:none;cursor:pointer">Map</button>` : ""}
         ${link ? `<a class="ext" href="${esc(link)}" target="_blank" rel="noopener">${/google\.[a-z.]+\/maps/.test(link) ? "Maps ↗" : "Link ↗"}</a>` : ""}
-        <button class="ext" type="button" data-edit style="border:0;background:none;cursor:pointer">Edit</button></div></div></article>`;
+        ${cmtBtn(p)}<button class="ext" type="button" data-edit style="border:0;background:none;cursor:pointer">Edit</button></div></div></article>`;
 }
 function flashPlace(id) { requestAnimationFrame(() => { const c = document.getElementById("pl-" + id); if (c) { c.scrollIntoView({ block: "nearest", behavior: reduceMotion() ? "auto" : "smooth" }); c.classList.add("flash"); setTimeout(() => c.classList.remove("flash"), 1400); } }); }
 async function fillPhotos() {
@@ -1339,6 +1347,7 @@ function bookingCard(id, b) {
     body = `<div class="bk-facts"><span><b>${esc(fmtD(b.date, { weekday: "short", month: "short", day: "numeric" }) || "No date")}</b>${b.time ? " · " + esc(b.time) : ""}</span>${b.addr ? `<span>${esc(b.addr)}</span>` : ""}${conf}${money_}</div>`;
   }
   if (k.group === "transport") body += statusHtml(id, b);
+  const extra = reminderFacts(id) + loyaltyHtml(b); if (extra) body += `<div class="bk-extra">${extra}</div>`;
   return `<article class="bk ${bkFocus === id ? "focus" : ""}" id="bk-${id}" style="--bc:${k.col}"><div class="bk-top"><div><div class="bk-kind">${esc(k.label)}</div><div class="bk-title">${esc(b.title || k.label)}</div></div><button class="btn ghost small" type="button" data-bedit="${id}">Edit</button></div>${body}${b.notes ? `<p class="hint">${esc(b.notes)}</p>` : ""}</article>`;
 }
 function bookingModal(id, kind, prefill = {}) {
@@ -1365,6 +1374,8 @@ function bookingModal(id, kind, prefill = {}) {
     <div data-g="event" class="grid2">${fld("date", "Date", "date")}${fld("time", "Time", "time")}</div>
     <div data-g="lodging event" class="field"><label for="bm-addr">Address or place</label><div class="suggest-wrap"><input id="bm-addr" data-k="addr" value="${esc(b.addr || "")}" autocomplete="off" placeholder="Search to pin it on the map" role="combobox" aria-expanded="false" aria-controls="bmAddrL"><ul class="suggest" id="bmAddrL" role="listbox" hidden></ul></div></div>
     ${fld("conf", "Confirmation number", "text", "ABC123", 'maxlength="40"')}
+    <div class="grid2">${fld("cancelBy", "Free cancellation until", "date")}
+      <label class="field" data-g="flight" for="bm-checkinH">Online check-in opens<select id="bm-checkinH" data-k="checkinH">${[["24", "24 hours before"], ["48", "48 hours before"], ["72", "72 hours before"], ["30", "30 hours before"], ["0", "Don't remind me"]].map(([v, l]) => `<option value="${v}" ${String(b.checkinH || "24") === v ? "selected" : ""}>${l}</option>`).join("")}</select></label></div>
     <div class="grid3">${fld("cost", "Total cost", "number", "0", 'min="0" step="0.01"')}
       <label class="field" for="bm-costCur">Currency<select id="bm-costCur">${CURRENCIES.map(c => `<option ${c === (b.costCur || homeCur()) ? "selected" : ""}>${c}</option>`).join("")}</select></label>
       <label class="field" for="bm-paidBy">Paid by<select id="bm-paidBy" data-k="paidBy"><option value="">—</option>${members().map(e => `<option value="${esc(e)}" ${b.paidBy === e ? "selected" : ""}>${esc(nameOf(e))}</option>`).join("")}</select></label>
@@ -1914,6 +1925,9 @@ const HELP = [
   ["start", "Getting started", `<p>Each trip has its own map, day-by-day plan, bookings and budget. Make one with <b>New trip</b> on the home page, then open <b>Share</b> to invite people by their Google email. Everyone on a trip can edit it, and changes show up for everyone right away.</p>
     <p>Wide screens show sections on the left, the page in the middle and the map on the right. Use <b>List / Split / Map</b> at the top to hide the map or make it bigger. On a phone, the <b>Map</b> button switches between the two.</p>
     <p>Map labels are in English by default, even in places like Japan. To change that, tap your picture (top right) → <b>Map labels</b> and pick English, Both (English with the local name under it) or Local.</p>`],
+  ["today", "Today and weather", `<p><b>Today</b> (top of the sidebar) is your during-the-trip screen: the day's weather, bookings, what's next with one-tap directions, and a checklist to tick off places as you go. Use ‹ › to look at other days. While a trip is on, Wayfinder opens straight to it.</p>
+    <p>Each day shows its <b>weather</b>: a forecast in the two weeks before, and the typical weather for those dates before that. Switch °F/°C in your picture menu (top right). With Google turned on, stops show <b>opening hours</b> and warn you if a place is closed that day or at the time you planned. Holidays aren't included, so double-check those.</p>
+    <p>The <b>Journal</b> box on Today is for memories. It goes into the memory book.</p>`],
   ["places", "Places to visit", `<p>Search for anything (a museum, a beach, a café) and pick it from the list. Wayfinder fills in the type, city, country, map pin and a photo when one is free to use. Tap ♥ on the places you're most excited about.</p>
     <p>Filter by type, <b>country</b> and city. The city list narrows to the country you pick. Places saved without a country get one filled in automatically from their location.</p>`],
   ["plan", "Itinerary", `<ul><li><b>Add places</b> with <i>+ Add a place</i> on a day, or open <b>Saved places</b> and drag them into days. If search shows several branches, check the street and neighborhood under each name. You can also paste a Google Maps link, or coordinates copied by pressing and holding a spot in Google Maps.</li>
@@ -1928,15 +1942,21 @@ const HELP = [
     <ul><li><b>Layovers</b>: add each stop in a flight. <b>Route map</b> on a flight draws the whole travel day with dashed lines through every layover. Tapping a travel day on the map shows the same thing.</li>
     <li><b>Tracking</b>: flights with a number get FlightAware and Flightradar24 links. <b>Watch for changes</b> alerts you to delays, gate changes and cancellations while Wayfinder is open (this needs the live-status key below).</li>
     <li><b>Find stays nearby</b> lists hotels, hostels and B&amp;Bs close to the places on your days, or near where your flight lands, with links to check prices. <i>Add as stay</i> fills in a booking for you.</li></ul>`],
+  ["together", "Deciding together", `<p>Tap <b>💬</b> on any place to leave a comment for the group ("too touristy?", "her friend loved it"). On <b>Notes &amp; votes</b>, start a <b>quick vote</b> when you can't decide. Everyone taps an option, you see who picked what, and whoever started it closes the vote.</p>
+    <p><b>Duplicate trip</b> (bottom of Overview) copies a trip as a starting point for the next one, with the dates moved.</p>`],
   ["food", "Restaurants", `<p>The Restaurants tab gathers the places to eat and drink you've saved, plus your restaurant reservations. <b>Find places to eat</b> searches around the places on your days, by restaurants, cafés or bars, and <i>Save</i> adds one to your list.</p>`],
   ["gmail", "Import from Gmail", `<p>In <b>Bookings → Import from Gmail</b>, Wayfinder asks Google for read-only access, finds confirmation emails, and shows the flights, stays, cars, trains and reservations it can read. You pick which to add. Connecting flights on one booking become one flight with layovers. Emails are read in your browser and nothing else is kept.</p>
     <p>It works with emails that carry booking details for Gmail (most airlines, hotel chains, booking sites and rental companies). For the rest, it lists the email so you can add it by hand.</p>
     <p><b>One-time setup (trip owner):</b></p><ol><li>Open <a href="https://console.cloud.google.com/apis/library/gmail.googleapis.com" target="_blank" rel="noopener">Gmail API in Google Cloud</a>, pick your Firebase project, and click <b>Enable</b>.</li>
     <li>In <a href="https://console.cloud.google.com/auth/audience" target="_blank" rel="noopener">Google Auth Platform → Audience</a>: if it says <i>Testing</i>, add each person's Gmail under <b>Test users</b>.</li>
     <li>The first time, Google says it hasn't verified the app. That's expected for a personal app: click <b>Advanced → Go to …</b> and tick the box to allow reading email.</li></ol>`],
-  ["budget", "Budget and money", `<p>Log what you spend in any currency. Wayfinder converts it to the trip's home currency with that day's exchange rate, splits it between the people you pick, and works out who owes whom. Bookings with a cost count too.</p>`],
+  ["budget", "Budget and money", `<p>Log what you spend in any currency. Wayfinder converts it to the trip's home currency with that day's exchange rate, splits it between the people you pick, and works out who owes whom. Bookings with a cost count too.</p To settle up, add how people can pay you (Venmo, PayPal, Cash App or Zelle). Whoever owes gets a pay button with the amount filled in, then taps <b>Mark paid</b>.</p>`],
   ["lists", "To-do and packing", `<p><b>To-do</b> is shared: assign tasks and set due dates. <b>Packing</b> is private: everyone on the trip has their own list.</p>`],
-  ["export", "Export and offline", `<p><b>Export PDF</b> builds a printable trip book (itinerary with route sketches, bookings, budget, lists). Pick what to include, then save as PDF. Once you've opened a trip, it keeps working offline, and your edits sync when you're back online.</p>`],
+  ["calendar", "Calendar and reminders", `<p><b>Add to calendar</b> (top of a trip) downloads a calendar file with your flights, check-ins, each day's plan and stops with times. Open it on your iPhone or Mac, or import it into Google Calendar. It includes alerts: 3 hours before a flight, when online check-in opens, and the day before free cancellation ends.</p>
+    <p>In a booking, set <b>Free cancellation until</b> and, for flights, when <b>online check-in opens</b>. Bookings show these, and Wayfinder alerts you while it's open.</p>
+    <p><b>Loyalty numbers</b> (picture menu, top right) are private to you. Each one shows on matching bookings, like your Atmos number on Alaska and Hawaiian flights, with a copy button.</p>`],
+  ["guide", "Country guide", `<p>For each country on your trip: plug type and voltage, emergency numbers, tipping customs, entry steps for US passports with links to the official sites, and handy phrases. Entry rules change, so always confirm on the official sites before you fly.</p>`],
+  ["export", "Export and offline", `<p><b>Export PDF</b> has two styles: a <b>Memory book</b> (photos, journal entries, places you visited) and a printable trip book (itinerary with route sketches, bookings, budget, lists). Pick what to include, then save as PDF. Once you've opened a trip, it keeps working offline, and your edits sync when you're back online.</p>`],
   ["google", "Google Maps (optional)", `<p>With a Google Maps key, Wayfinder uses Google for the map, for search (so it can tell branches like Ippudo Harajuku and Ippudo Shinjuku apart, with exact addresses), and for <i>Stays nearby</i> and <i>Find places to eat</i>, with ratings. Without a key, it uses the free OpenStreetMap versions.</p>
     <ol><li>In <a href="https://console.cloud.google.com/billing" target="_blank" rel="noopener">Google Cloud → Billing</a>, link a billing account to your Firebase project.</li>
     <li>Enable <a href="https://console.cloud.google.com/apis/library/maps-backend.googleapis.com" target="_blank" rel="noopener">Maps JavaScript API</a> and <a href="https://console.cloud.google.com/apis/library/places.googleapis.com" target="_blank" rel="noopener">Places API (New)</a>.</li>
@@ -1955,6 +1975,482 @@ function renderHelp() {
   const sec = location.hash.split("/")[2]; if (sec) document.getElementById("h-" + sec)?.scrollIntoView();
   $(".help-toc").onclick = e => { const a = e.target.closest("a"); if (!a) return; e.preventDefault(); document.getElementById("h-" + a.getAttribute("href").split("/")[2])?.scrollIntoView({ behavior: reduceMotion() ? "auto" : "smooth" }); };
   try { localStorage.setItem("trips-seen-help", "1"); } catch {}
+}
+
+// ================================================================ WEATHER (Open-Meteo: free, no key)
+// forecast for the next ~2 weeks; before that, what the same dates were like over the last 5 years
+const WXC = (() => { try { return JSON.parse(localStorage.getItem("trips-wx") || "{}"); } catch { return {}; } })();
+const saveWx = debounce(() => { try { const keep = Object.entries(WXC).filter(([, v]) => Date.now() - v.at < 40 * 864e5).slice(-600); localStorage.setItem("trips-wx", JSON.stringify(Object.fromEntries(keep))); } catch {} }, 500);
+const tDeg = c => c == null ? "–" : Math.round(useF() ? c * 9 / 5 + 32 : c) + "°";
+const WXI = c => c == null ? "🌤️" : c === 0 ? "☀️" : c <= 2 ? "🌤️" : c === 3 ? "☁️" : c <= 48 ? "🌫️" : c <= 57 ? "🌦️" : c <= 67 ? "🌧️" : c <= 77 ? "🌨️" : c <= 82 ? "🌧️" : c <= 86 ? "🌨️" : "⛈️";
+const WXT = c => c == null ? "" : c === 0 ? "Clear" : c <= 2 ? "Partly cloudy" : c === 3 ? "Cloudy" : c <= 48 ? "Fog" : c <= 57 ? "Drizzle" : c <= 67 ? "Rain" : c <= 77 ? "Snow" : c <= 82 ? "Showers" : c <= 86 ? "Snow showers" : "Thunderstorms";
+// where the day happens: its places, else your stay, else where your flight lands, else the trip's destination
+function dayPoint(iso) {
+  const pts = dayPlaces(iso).filter(hasPt);
+  if (pts.length) return { lat: pts.reduce((a, p) => a + p.lat, 0) / pts.length, lon: pts.reduce((a, p) => a + p.lon, 0) / pts.length };
+  const st = stayFor(iso); if (st && st[1].lat != null) return { lat: st[1].lat, lon: st[1].lon };
+  const fl = Object.values(T.bookings).find(b => b.kind === "flight" && segDates(b).has(iso)); const ap = fl && airportOf(flightSegs(fl).filter(l => l.depDate === iso || l.arrDate === iso).pop()?.to);
+  if (ap) return { lat: ap.lat, lon: ap.lon };
+  const d = tripDests(T.trip).find(hasPt); return d ? { lat: d.lat, lon: d.lon } : null;
+}
+const wxKey = (pt, iso) => `${pt.lat.toFixed(1)},${pt.lon.toFixed(1)}|${iso}`;
+function wxFor(iso) { const pt = dayPoint(iso); return pt ? WXC[wxKey(pt, iso)] || null : null; }
+let wxBusy = false, wxSig = "";
+async function loadWeather() {
+  if (wxBusy || !navigator.onLine || !T.trip) return;
+  const today = isoOf(new Date()), horizon = addDays(today, 15), groups = {};
+  for (const iso of tripDays()) {
+    const pt = dayPoint(iso); if (!pt) continue;
+    const k = wxKey(pt, iso), c = WXC[k], fc = iso >= today && iso <= horizon;
+    if (c && (fc ? c.fc && Date.now() - c.at < 3 * 36e5 : !c.fc && Date.now() - c.at < 30 * 864e5)) continue;
+    if (iso < addDays(today, -1)) continue;   // past days: nothing to look up
+    const g = `${pt.lat.toFixed(1)},${pt.lon.toFixed(1)}|${fc ? "f" : "t"}`; (groups[g] ||= { pt, fc, days: [] }).days.push(iso);
+  }
+  const sig = Object.keys(groups).join(";"); if (!sig || sig === wxSig) return;
+  wxBusy = true; wxSig = sig;
+  try {
+    for (const g of Object.values(groups)) {
+      const a = g.days[0], b = g.days[g.days.length - 1], ll = `latitude=${g.pt.lat.toFixed(3)}&longitude=${g.pt.lon.toFixed(3)}`;
+      if (g.fc) {
+        const j = await fetch(`https://api.open-meteo.com/v1/forecast?${ll}&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max&timezone=auto&start_date=${a}&end_date=${b}`).then(r => r.json());
+        (j.daily?.time || []).forEach((d, i) => { WXC[wxKey(g.pt, d)] = { fc: true, at: Date.now(), hi: j.daily.temperature_2m_max[i], lo: j.daily.temperature_2m_min[i], rain: j.daily.precipitation_probability_max?.[i], code: j.daily.weather_code[i] }; });
+      } else {
+        // the same dates in each of the last 5 years (Feb 29 → Feb 28)
+        const y0 = +today.slice(0, 4), acc = {};
+        for (let y = y0 - 5; y < y0; y++) {
+          const shift = d => { const yy = +d.slice(0, 4) - (+a.slice(0, 4) - y); let md = d.slice(5); if (md === "02-29") md = "02-28"; return `${yy}-${md}`; };
+          const j = await fetch(`https://archive-api.open-meteo.com/v1/archive?${ll}&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum&timezone=auto&start_date=${shift(a)}&end_date=${shift(b)}`).then(r => r.json()).catch(() => null);
+          (j?.daily?.time || []).forEach((d, i) => { const md = d.slice(5); const o = acc[md] ||= { hi: [], lo: [], wet: 0, n: 0, codes: [] }; if (j.daily.temperature_2m_max[i] == null) return; o.hi.push(j.daily.temperature_2m_max[i]); o.lo.push(j.daily.temperature_2m_min[i]); o.n++; if ((j.daily.precipitation_sum[i] || 0) >= 1) o.wet++; o.codes.push(j.daily.weather_code[i]); });
+        }
+        const avg = x => x.reduce((p, q) => p + q, 0) / x.length;
+        for (const iso of g.days) { const o = acc[iso.slice(5) === "02-29" ? "02-28" : iso.slice(5)]; if (!o || !o.n) continue;
+          const wet = Math.round(o.wet / o.n * 100), code = wet >= 50 ? 61 : wet >= 25 ? 80 : Math.round(avg(o.codes)) <= 1 ? 0 : 2;
+          WXC[wxKey(g.pt, iso)] = { fc: false, at: Date.now(), hi: avg(o.hi), lo: avg(o.lo), rain: wet, code }; }
+      }
+    }
+    saveWx();
+  } catch {} finally { wxBusy = false; }
+  if (cur && (cur.tab === "plan" || cur.tab === "today")) renderTrip(true);
+}
+function wxChip(iso, big) {
+  const w = wxFor(iso); if (!w) return "";
+  const tip = w.fc ? `${WXT(w.code)} forecast` : `Typical for this date (average of the last 5 years)${w.rain != null ? `: rain on ${w.rain}% of days` : ""}`;
+  if (big) return `<div class="wx-big"><span class="wx-ic">${WXI(w.code)}</span><div><b>${tDeg(w.hi)} / ${tDeg(w.lo)}</b><span>${w.fc ? `${esc(WXT(w.code))}${w.rain != null ? ` · ${w.rain}% chance of rain` : ""}` : `Typical for this date · rain on ${w.rain}% of days`}</span><span class="hint">${w.fc ? "Forecast from Open-Meteo" : "Forecast shows up two weeks before"}</span></div></div>`;
+  return `<span class="wx ${w.fc ? "" : "typ"}" title="${esc(tip)}">${WXI(w.code)} ${tDeg(w.hi)}/${tDeg(w.lo)}${w.fc ? "" : " avg"}</span>`;
+}
+
+// ================================================================ OPENING HOURS (Google places only)
+const WDAY = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+let hoursBusy = false;
+async function loadHours() {
+  if (hoursBusy || !useGoogle() || !navigator.onLine) return;
+  const days = new Set(tripDays()), need = placeList().filter(p => p.gid && days.has(p.day) && (!p.hours || Date.now() - (p.hours.at || 0) > 30 * 864e5)).slice(0, 12);
+  if (!need.length) return;
+  hoursBusy = true; let n = 0;
+  try {
+    const { Place } = await gPlaces();
+    for (const p of need) {
+      try {
+        const pl = new Place({ id: p.gid }); await pl.fetchFields({ fields: ["regularOpeningHours"] });
+        const per = pl.regularOpeningHours?.periods || [];
+        const hours = { at: Date.now() };
+        if (!pl.regularOpeningHours) hours.none = true;
+        else if (per.length === 1 && !per[0].close) hours.always = true;
+        else hours.p = per.map(x => [x.open.day, x.open.hour * 60 + x.open.minute, x.close ? x.close.day : x.open.day, x.close ? x.close.hour * 60 + x.close.minute : 1440]);
+        if (T.places[p.id]) { T.places[p.id] = { ...T.places[p.id], hours }; savePlace(p.id); n++; }
+      } catch {}
+    }
+  } finally { hoursBusy = false; }
+  if (n && cur && (cur.tab === "plan" || cur.tab === "today")) renderTrip(true);
+}
+const hm = m => `${String(Math.floor(m / 60) % 24).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+// is this place open on that day (and at the planned time)? → { cls, txt } or null when unknown
+function hoursNote(p, iso) {
+  const h = p.hours; if (!h || h.none || !validIso(iso)) return null;
+  if (h.always) return { cls: "ok", txt: "Open 24 hours" };
+  const wd = new Date(iso + "T12:00").getDay(), today = (h.p || []).filter(x => x[0] === wd);
+  if (!today.length) return { cls: "bad", txt: `Closed on ${WDAY[wd]}s` };
+  const spans = today.map(x => [x[1], x[2] === x[0] ? x[3] : x[3] + 1440]).sort((a, b) => a[0] - b[0]), txt = spans.map(([a, b]) => `${hm(a)}–${hm(b)}`).join(", ");
+  if (p.time && /^\d\d:\d\d$/.test(p.time)) {
+    const t = +p.time.slice(0, 2) * 60 + +p.time.slice(3);
+    if (!spans.some(([a, b]) => t >= a && t < b)) return { cls: "warn", txt: `Open ${txt} on ${WDAY[wd]}s, not at ${p.time}` };
+    const end = spans.find(([a, b]) => t >= a && t < b)[1];
+    if (end - t < 45) return { cls: "warn", txt: `Closes at ${hm(end)}` };
+  }
+  return { cls: "ok", txt: `Open ${txt}` };
+}
+const hoursBadge = (p, iso) => { const n = hoursNote(p, iso); return n ? `<span class="hrs ${n.cls}" title="Regular opening hours from Google. Holidays may differ.">${n.cls === "bad" ? "⚠ " : n.cls === "warn" ? "⏰ " : ""}${esc(n.txt)}</span>` : ""; };
+
+// ================================================================ TODAY
+let todayIso = null;
+function todayDefault() {
+  const days = tripDays(), t = isoOf(new Date());
+  return days.includes(t) ? t : t < days[0] ? days[0] : days[days.length - 1];
+}
+function viewToday(v) {
+  const days = tripDays();
+  if (!days.length) { v.innerHTML = `<div class="empty">Add the trip's dates in Overview to see each day here.</div>`; return; }
+  const real = isoOf(new Date());
+  if (!todayIso || !days.includes(todayIso)) todayIso = todayDefault();
+  const iso = todayIso, i = days.indexOf(iso), isToday = iso === real, items = dayItems(iso), places = items.filter(x => x.k === "p");
+  const next = places.find(p => !p.visited), bk = bookingsOn(iso), stay = stayFor(iso);
+  let nextHtml = "";
+  if (next) {
+    const k = places.indexOf(next), prev = places.slice(0, k).reverse().find(hasPt);
+    const d = prev && hasPt(next) ? km(prev, next) : null, md = legModeOf(iso, next, d ?? 0);
+    const ll = `${next.lat},${next.lon}`;
+    nextHtml = `<div class="card next-up" style="--tc:${TYPE[next.type].col}"><span class="k">${places.some(p => p.visited) ? "Up next" : isToday ? "First stop" : "First stop that day"}</span>
+      <div class="row" style="gap:12px;align-items:center"><span class="thumb big">${photoSrcOf(next) ? `<img src="${esc(photoSrcOf(next))}" alt="" onerror="this.remove()">` : esc(next.name.charAt(0))}</span>
+        <div class="grow"><h2>${esc(next.name)}</h2><span class="hint">${next.time ? `<b>${esc(next.time)}</b> · ` : ""}${esc(TYPE[next.type].label)}${next.addr ? " · " + esc(next.addr) : ""}</span>${hoursBadge(next, iso)}
+        ${d != null ? `<span class="hint">${MODE_IC[md]} ${esc(legText(d, md))} from ${esc(prev.name)}</span>` : ""}</div></div>
+      ${hasPt(next) ? `<div class="row" style="gap:8px;flex-wrap:wrap"><a class="btn accent small" href="https://maps.apple.com/directions?destination=${ll}&mode=${APPLE_MODE[md]}" target="_blank" rel="noopener">Directions in Apple Maps</a><a class="btn small" href="https://www.google.com/maps/dir/?api=1&destination=${ll}&travelmode=${MODES[md].g}" target="_blank" rel="noopener">Google Maps</a><button class="btn ghost small" type="button" data-visit="${next.id}">Mark as visited ✓</button></div>` : `<button class="btn ghost small" type="button" data-visit="${next.id}">Mark as visited ✓</button>`}
+    </div>`;
+  } else if (places.length) nextHtml = `<div class="card"><b>All done for the day 🎉</b><p class="hint">You've visited every stop.</p></div>`;
+  v.innerHTML = `<div class="today-nav row between"><button class="iconbtn" type="button" data-tday="${days[i - 1] || ""}" ${i ? "" : "disabled"} aria-label="Previous day">‹</button>
+      <div style="text-align:center"><h2>${isToday ? "Today" : esc(fmtD(iso, { weekday: "long" }))}</h2><span class="hint">${esc(fmtD(iso, { weekday: isToday ? "long" : undefined, month: "long", day: "numeric" }))} · Day ${i + 1} of ${days.length}${!isToday && real < days[0] ? ` · in ${daysBetween(real, iso)} days` : ""}</span></div>
+      <button class="iconbtn" type="button" data-tday="${days[i + 1] || ""}" ${i < days.length - 1 ? "" : "disabled"} aria-label="Next day">›</button></div>
+    ${wxChip(iso, true)}
+    ${bk.length || stay ? `<div class="card"><h3>Bookings</h3><div class="today-bk">${bk.map(x => `<button type="button" class="bk-mini" data-bedit="${x.id}">${x.txt}</button>`).join("")}${stay && !bk.some(x => x.id === stay[0]) ? `<button type="button" class="bk-mini" data-bedit="${stay[0]}"><b>Staying at</b> ${esc(stay[1].title || "your stay")}${stay[1].addr ? " · " + esc(stay[1].addr) : ""}</button>` : ""}</div></div>` : ""}
+    ${nextHtml}
+    <div class="card"><div class="row between"><h3>The plan</h3><a class="linkbtn" href="#/t/${cur.id}/plan" data-goday="${iso}">Edit in Itinerary</a></div>
+      ${items.length ? `<ol class="today-list">${items.map(x => x.k === "n" ? (x.text ? `<li class="tl-note">${x.time ? `<b>${esc(x.time)}</b> ` : ""}${esc(x.text).replace(/\n/g, "<br>")}</li>` : "") : `<li class="${x.visited ? "done" : ""} ${x === next ? "is-next" : ""}"><label><input type="checkbox" data-visit="${x.id}" ${x.visited ? "checked" : ""} aria-label="Visited ${esc(x.name)}"><span class="tl-time">${esc(x.time || "")}</span><span class="grow"><b>${esc(x.name)}</b>${hoursBadge(x, iso)}</span></label></li>`).join("")}</ol>` : `<p class="hint">Nothing planned for this day yet.</p>`}
+      ${T.days[iso]?.notes ? `<p class="today-notes">${esc(T.days[iso].notes)}</p>` : ""}</div>
+    <div class="card"><h3>Journal</h3><textarea id="jr-${iso}" data-journal="${iso}" rows="3" maxlength="4000" placeholder="${isToday ? "How was today? A favorite moment, a meal to remember…" : "Notes or memories from this day"}">${esc(T.days[iso]?.journal || "")}</textarea><p class="hint">Journal entries go into the memory book (Export PDF → Memory book).</p></div>`;
+  v.onclick = e => {
+    const d = e.target.closest("[data-tday]"); if (d && d.dataset.tday) { todayIso = d.dataset.tday; renderTrip(); return; }
+    const vb = e.target.closest("button[data-visit]"); if (vb) { const id = vb.dataset.visit; T.places[id] = { ...T.places[id], visited: true }; savePlace(id); renderTrip(); return; }
+    const be = e.target.closest("[data-bedit]"); if (be) return bookingModal(be.dataset.bedit);
+    const g = e.target.closest("[data-goday]"); if (g) { mapFocus = g.dataset.goday; scrollToDay = g.dataset.goday; fitPending = true; }
+  };
+  v.onchange = e => { const id = e.target.dataset?.visit; if (id && e.target.type === "checkbox") { T.places[id] = { ...T.places[id], visited: e.target.checked }; savePlace(id); renderTrip(); } };
+  v.oninput = e => { const iso2 = e.target.dataset?.journal; if (iso2) { T.days[iso2] = { ...(T.days[iso2] || {}), journal: e.target.value.slice(0, 4000) }; saveDay(iso2, 800); } };
+  loadWeather(); loadHours();
+}
+
+// ================================================================ REMINDERS (check-in opens, free cancellation ends)
+const localDT = (d, t) => validIso(d) ? new Date(`${d}T${t || "00:00"}`) : null;
+function reminders(withPast) {
+  const out = [], now = Date.now();
+  for (const [id, b] of Object.entries(T.bookings)) {
+    const k = KINDS[b.kind] || KINDS.other, nm = b.title || k.label;
+    if (validIso(b.cancelBy)) out.push({ id, at: localDT(b.cancelBy, "23:59"), kind: "cancel", txt: `Last day to cancel ${nm} for free`, short: `Free cancellation until ${fmtD(b.cancelBy, { weekday: "short", month: "short", day: "numeric" })}` });
+    if (b.kind === "flight" && b.checkinH !== "0") {
+      const f = flightSegs(b)[0], dep = localDT(f.depDate, f.depTime);
+      if (dep && f.depTime) { const at = new Date(dep - (+(b.checkinH || 24)) * 36e5); out.push({ id, at, kind: "checkin", txt: `Online check-in opens for ${f.num || nm}`, short: `Check-in opens ${fmtD(isoOf(at), { weekday: "short", month: "short", day: "numeric" })} ${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}` }); }
+    }
+  }
+  return out.filter(r => withPast || r.at > now - 864e5).sort((a, b) => a.at - b.at);
+}
+const remSoon = r => r.at - Date.now() < 3 * 864e5;
+function reminderFacts(id) { return reminders(true).filter(r => r.id === id).map(r => `<span class="rem ${r.at < Date.now() ? "past" : remSoon(r) ? "soon" : ""}">${r.kind === "cancel" ? "↩" : "🛫"} ${esc(r.short)}</span>`).join(""); }
+// alerts while the app is open (the calendar export carries the same reminders as alarms)
+function checkReminders() {
+  if (!cur || !T.trip) return;
+  let seen = {}; try { seen = JSON.parse(localStorage.getItem("trips-rem") || "{}"); } catch {}
+  for (const r of reminders()) {
+    const key = `${cur.id}|${r.id}|${r.kind}|${+r.at}`, dt = r.at - Date.now();
+    const due = r.kind === "checkin" ? dt <= 0 && dt > -6 * 36e5 : dt > 0 && dt < 24 * 36e5;
+    if (due && !seen[key]) { seen[key] = 1; notify(r.kind === "checkin" ? "Check-in is open" : "Free cancellation ends soon", r.txt); }
+  }
+  try { localStorage.setItem("trips-rem", JSON.stringify(seen)); } catch {}
+}
+setInterval(checkReminders, 10 * 60 * 1000);
+
+// ================================================================ CALENDAR EXPORT (.ics)
+const icsEsc = x => String(x || "").replace(/\\/g, "\\\\").replace(/;/g, "\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
+const icsD = d => d.replace(/-/g, "");
+// "floating" local times: they show at that clock time wherever your phone is, which suits travel
+const icsT = (d, t) => `${icsD(d)}T${(t || "09:00").replace(":", "")}00`;
+const icsAdd = (d, t, mins) => { const x = new Date(`${d}T${t || "09:00"}`); x.setMinutes(x.getMinutes() + mins); return icsT(isoOf(x), `${String(x.getHours()).padStart(2, "0")}:${String(x.getMinutes()).padStart(2, "0")}`); };
+const icsFold = line => { const out = []; let l = line; while (l.length > 74) { out.push(l.slice(0, 74)); l = " " + l.slice(74); } out.push(l); return out.join("\r\n"); };
+function icsText(o) {
+  const t = T.trip, ev = [], stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+/, "");
+  const add = (uid, summary, start, end, { allDay, desc, loc, alarms = [] } = {}) => {
+    const L2 = ["BEGIN:VEVENT", `UID:${uid}@wayfinder-${cur.id}`, `DTSTAMP:${stamp}`];
+    if (allDay) { L2.push(`DTSTART;VALUE=DATE:${icsD(start)}`, `DTEND;VALUE=DATE:${icsD(end || addDays(start, 1))}`); }
+    else { L2.push(`DTSTART:${start}`, `DTEND:${end > start ? end : start.slice(0, 9) + String(+start.slice(9, 11) + 1).padStart(2, "0") + start.slice(11)}`); }
+    L2.push(`SUMMARY:${icsEsc(summary)}`); if (desc) L2.push(`DESCRIPTION:${icsEsc(desc)}`); if (loc) L2.push(`LOCATION:${icsEsc(loc)}`);
+    for (const [trig, txt] of alarms) L2.push("BEGIN:VALARM", "ACTION:DISPLAY", `DESCRIPTION:${icsEsc(txt)}`, `TRIGGER:${trig}`, "END:VALARM");
+    L2.push("END:VEVENT"); ev.push(L2.map(icsFold).join("\r\n"));
+  };
+  if (o.bookings) for (const [id, b] of Object.entries(T.bookings)) {
+    const k = KINDS[b.kind] || KINDS.other, conf = b.conf ? `Confirmation: ${b.conf}` : "", note = [conf, b.notes].filter(Boolean).join("\n");
+    if (b.kind === "flight") flightSegs(b).forEach((l, i) => { if (!validIso(l.depDate)) return;
+      add(`${id}-${i}`, `✈ ${l.num ? l.num + " " : ""}${l.from || "?"} → ${l.to || "?"}`, icsT(l.depDate, l.depTime), validIso(l.arrDate) && l.arrTime ? icsT(l.arrDate, l.arrTime) : icsAdd(l.depDate, l.depTime, 120),
+        { allDay: !l.depTime, desc: [l.seat && "Seats: " + l.seat, note, "Times are local to each airport."].filter(Boolean).join("\n"), alarms: i === 0 && l.depTime ? [["-PT3H", "Head to the airport"]] : [] }); });
+    else if (k.group === "transport" || k.group === "car") { if (validIso(b.depDate)) add(id, `${k.label}: ${b.title || [b.from, b.to].filter(Boolean).join(" → ")}`, icsT(b.depDate, b.depTime), validIso(b.arrDate) && b.arrTime ? icsT(b.arrDate, b.arrTime) : icsAdd(b.depDate, b.depTime, 60), { allDay: !b.depTime, desc: note, loc: b.from, alarms: b.depTime ? [["-PT1H", "Leave soon"]] : [] }); }
+    else if (k.group === "lodging") {
+      if (validIso(b.checkIn)) add(id + "-in", `Check in: ${b.title || "stay"}`, icsT(b.checkIn, b.checkInTime || "15:00"), icsAdd(b.checkIn, b.checkInTime || "15:00", 30), { desc: note, loc: b.addr });
+      if (validIso(b.checkOut)) add(id + "-out", `Check out: ${b.title || "stay"}`, icsT(b.checkOut, b.checkOutTime || "11:00"), icsAdd(b.checkOut, b.checkOutTime || "11:00", 30), { loc: b.addr, alarms: [["-PT1H", "Check-out in an hour"]] });
+    } else if (validIso(b.date)) add(id, `${k.label}: ${b.title || ""}`, b.time ? icsT(b.date, b.time) : b.date, b.time ? icsAdd(b.date, b.time, 90) : "", { allDay: !b.time, desc: note, loc: b.addr, alarms: b.time ? [["-PT1H", b.title || k.label]] : [] });
+  }
+  if (o.reminders) for (const r of reminders(true)) { const d = isoOf(r.at), tm = `${String(r.at.getHours()).padStart(2, "0")}:${String(r.at.getMinutes()).padStart(2, "0")}`;
+    if (r.kind === "cancel") add(`${r.id}-cancel`, `↩ ${r.txt}`, d, "", { allDay: true, alarms: [["-PT15H", r.txt]] });
+    else add(`${r.id}-checkin`, `🛫 ${r.txt}`, icsT(d, tm), icsAdd(d, tm, 15), { alarms: [["PT0M", r.txt]] }); }
+  if (o.days || o.stops) tripDays().forEach((iso, i) => {
+    const ps = dayPlaces(iso); if (!ps.length && !dayCards(iso).length) return;
+    if (o.days) add(`day-${iso}`, `Day ${i + 1}: ${ps.map(p => p.name).slice(0, 4).join(", ")}${ps.length > 4 ? "…" : ""}`, iso, "", { allDay: true,
+      desc: [...dayItems(iso).map(x => x.k === "n" ? (x.text ? `• ${x.time ? x.time + " " : ""}${x.text}` : "") : `${x.time ? x.time + " " : ""}${x.name}${x.addr ? " (" + x.addr + ")" : ""}`).filter(Boolean), T.days[iso]?.notes || ""].filter(Boolean).join("\n") });
+    if (o.stops) ps.filter(p => p.time).forEach(p => add(`stop-${p.id}-${iso}`, p.name, icsT(iso, p.time), icsAdd(iso, p.time, 60), { loc: p.addr || [p.name, p.city].filter(Boolean).join(", "), alarms: [["-PT30M", p.name]] }));
+  });
+  return ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//Wayfinder//Trips//EN", "CALSCALE:GREGORIAN", `X-WR-CALNAME:${icsEsc(t.name || "Trip")}`, ...ev, "END:VCALENDAR"].join("\r\n") + "\r\n";
+}
+function calendarModal() {
+  const o = (() => { try { return { bookings: true, reminders: true, days: true, stops: true, ...JSON.parse(localStorage.getItem("trips-ics") || "{}") }; } catch { return { bookings: true, reminders: true, days: true, stops: true }; } })();
+  const opt = (k, l, h) => `<label class="ics-opt"><input type="checkbox" data-ics="${k}" ${o[k] ? "checked" : ""}><span><b>${l}</b><span class="hint">${h}</span></span></label>`;
+  openModal(`<div class="row between"><h2>Add to calendar</h2><button class="iconbtn" type="button" data-close aria-label="Close">×</button></div>
+    <p class="hint">Downloads a calendar file. Open it on your iPhone or Mac to add everything to Apple Calendar, or import it in Google Calendar (Settings → Import). Times stay at the local clock time wherever you are.</p>
+    <div class="ics-opts">${opt("bookings", "Bookings", "Flights, trains, hotel check-in and check-out, cars, reservations")}${opt("reminders", "Reminders", "When online check-in opens and the last day to cancel for free")}${opt("days", "Each day's plan", "An all-day event listing the day's stops and notes")}${opt("stops", "Stops with a time", "Their own events, with a 30-minute heads-up")}</div>
+    <p class="hint">If you add it again after changing plans, delete the old events first so nothing is doubled.</p>
+    <div class="row" style="justify-content:flex-end"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn accent" type="button" id="icsGo">Download calendar file</button></div>`, m => {
+    $$("[data-close]", m).forEach(x => x.onclick = closeModal);
+    $("#icsGo").onclick = () => {
+      $$("[data-ics]", m).forEach(c => o[c.dataset.ics] = c.checked); try { localStorage.setItem("trips-ics", JSON.stringify(o)); } catch {}
+      const blob = new Blob([icsText(o)], { type: "text/calendar;charset=utf-8" }), a = document.createElement("a");
+      a.href = URL.createObjectURL(blob); a.download = (T.trip.name || "trip").replace(/[^\w\- ]+/g, "").trim().replace(/\s+/g, "-") + ".ics"; document.body.append(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(a.href), 4000); closeModal(); toast("Calendar file downloaded. Open it to add the events.");
+    };
+  });
+}
+
+// ================================================================ LOYALTY NUMBERS (private to you)
+const LOYP = [["Atmos Rewards (Alaska & Hawaiian)", "AS, HA, Alaska, Hawaiian"], ["Delta SkyMiles", "DL, Delta"], ["United MileagePlus", "UA, United"], ["American AAdvantage", "AA, American Airlines"], ["Southwest Rapid Rewards", "WN, Southwest"],
+  ["JAL Mileage Bank", "JL, Japan Airlines, JAL"], ["ANA Mileage Club", "NH, ANA, All Nippon"], ["British Airways Club", "BA, British Airways"], ["Flying Blue (Air France-KLM)", "AF, KL, Air France, KLM"], ["Cathay", "CX, Cathay"],
+  ["Marriott Bonvoy", "Marriott, Sheraton, Westin, Ritz-Carlton, St. Regis, Courtyard, Moxy, Aloft, Le Méridien, Renaissance, Autograph Collection, Four Points, Fairfield, Residence Inn, AC Hotel, W Hotel"],
+  ["Hilton Honors", "Hilton, DoubleTree, Hampton, Conrad, Waldorf, Embassy Suites, Canopy, Curio, Tapestry, Homewood"], ["World of Hyatt", "Hyatt, Andaz, Thompson, Alila"], ["IHG One Rewards", "InterContinental, Holiday Inn, Crowne Plaza, Kimpton, Hotel Indigo, Staybridge, voco, Regent"],
+  ["Hertz Gold Plus Rewards", "Hertz"], ["Enterprise Plus", "Enterprise"], ["National Emerald Club", "National"], ["Avis Preferred", "Avis"]];
+let LOY = [], loyUnsub = null;
+function subscribeLoyalty() { loyUnsub?.(); loyUnsub = onSnapshot(doc(fs, `users/${ME.uid}/prefs/loyalty`), s => { LOY = s.exists() ? (s.data().list || []) : []; if (cur?.tab === "bookings") renderTrip(true); }, () => {}); }
+function loyaltyFor(b) {
+  const nums = flightSegs(b).map(l => String(l.num || "").toUpperCase().replace(/\s/g, "")).filter(Boolean);
+  const hay = [b.title, b.num, b.addr, ...(b.legs || []).map(l => l.num)].filter(Boolean).join(" ").toLowerCase();
+  return LOY.filter(x => x.num && String(x.match || "").split(",").map(w => w.trim()).filter(Boolean).some(w =>
+    /^[A-Z0-9]{2}$/.test(w) && b.kind === "flight" ? nums.some(n => n.startsWith(w)) : w.length > 2 && hay.includes(w.toLowerCase())));
+}
+const loyaltyHtml = b => loyaltyFor(b).map(x => `<span class="loy" title="Only you see this">🎟 ${esc(x.prog)} <b class="mono">${esc(x.num)}</b><button class="linkbtn" type="button" data-copy="${esc(x.num)}">Copy</button></span>`).join("");
+function loyaltyModal() {
+  let list = LOY.map(x => ({ ...x }));
+  const paint = () => { $("#loyList").innerHTML = list.map((x, i) => `<div class="loy-row"><input class="input" data-li="${i}" data-lf="prog" value="${esc(x.prog)}" list="loyProgs" placeholder="Program" aria-label="Program">
+      <input class="input mono" data-li="${i}" data-lf="num" value="${esc(x.num)}" placeholder="Member number" aria-label="Member number" maxlength="30">
+      <input class="input" data-li="${i}" data-lf="match" value="${esc(x.match)}" placeholder="Shows on: airline codes or brands" aria-label="Shows on bookings matching">
+      <button class="iconbtn del" type="button" data-ld="${i}" aria-label="Remove">×</button></div>`).join("") || `<p class="hint">No numbers yet.</p>`; };
+  openModal(`<div class="row between"><h2>Loyalty numbers</h2><button class="iconbtn" type="button" data-close aria-label="Close">×</button></div>
+    <p class="hint">Only you can see these. Each number shows on your bookings that match it: an airline code like <b>AS</b> matches flight AS 841, and a brand like <b>Marriott</b> matches hotels with that name.</p>
+    <datalist id="loyProgs">${LOYP.map(([p]) => `<option value="${esc(p)}">`).join("")}</datalist>
+    <div id="loyList" class="loy-list"></div>
+    <button class="linkbtn" type="button" id="loyAdd" style="justify-self:start">+ Add a number</button>
+    <div class="row" style="justify-content:flex-end"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn accent" type="button" id="loySave">Save</button></div>`, m => {
+    $$("[data-close]", m).forEach(x => x.onclick = closeModal); paint();
+    $("#loyAdd").onclick = () => { list.push({ id: uidGen(), prog: "", num: "", match: "" }); paint(); $$('[data-lf="prog"]', m).pop()?.focus(); };
+    $("#loyList").addEventListener("input", e => { const i = e.target.dataset.li; if (i == null) return; const x = list[+i], f = e.target.dataset.lf; x[f] = e.target.value;
+      if (f === "prog") { const p = LOYP.find(q => q[0] === e.target.value); if (p && !x.match) { x.match = p[1]; const mi = $(`[data-li="${i}"][data-lf="match"]`, m); if (mi) mi.value = p[1]; } } });
+    $("#loyList").addEventListener("click", e => { const d = e.target.closest("[data-ld]"); if (d) { list.splice(+d.dataset.ld, 1); paint(); } });
+    $("#loySave").onclick = async () => { const clean = list.filter(x => x.num.trim()).map(x => ({ id: x.id || uidGen(), prog: x.prog.trim().slice(0, 60) || "Loyalty", num: x.num.trim().slice(0, 30), match: x.match.trim().slice(0, 400) }));
+      try { await setDoc(doc(fs, `users/${ME.uid}/prefs/loyalty`), { list: clean }); LOY = clean; closeModal(); toast("Saved. Only you can see these."); if (cur) renderTrip(); } catch (e) { fail(e); } };
+  });
+}
+
+// ================================================================ COMMENTS ON PLACES
+const commentsOf = p => Object.entries(p?.comments || {}).filter(([, c]) => c && c.text).sort((a, b) => (a[1].at || 0) - (b[1].at || 0));
+const cmtBtn = p => { const n = commentsOf(p).length; return `<button class="cmt-btn ${n ? "has" : ""}" type="button" data-cmt="${p.id}" aria-label="${n ? n + " comments" : "Comment"} on ${esc(p.name)}" title="Comments">💬${n ? " " + n : ""}</button>`; };
+function commentsModal(pid) {
+  const paint = () => {
+    const p = T.places[pid]; if (!p) return closeModal();
+    $("#cmList").innerHTML = commentsOf(p).map(([cid, c]) => `<div class="cmt ${c.by === ME.email ? "mine" : ""}">${avatar(c.by)}<div><span class="hint"><b>${esc(c.name || nameOf(c.by))}</b> · ${esc(new Date(c.at).toLocaleDateString("en-US", { month: "short", day: "numeric" }))}</span><p>${esc(c.text).replace(/\n/g, "<br>")}</p></div>${c.by === ME.email ? `<button class="iconbtn del" type="button" data-cdel="${cid}" aria-label="Delete comment">×</button>` : ""}</div>`).join("") || `<p class="hint">No comments yet. Ask a question or share a tip.</p>`;
+    const l = $("#cmList"); l.scrollTop = l.scrollHeight;
+  };
+  const p = T.places[pid];
+  openModal(`<div class="row between"><h2>${esc(p.name)}</h2><button class="iconbtn" type="button" data-close aria-label="Close">×</button></div>
+    <div class="cmt-list" id="cmList"></div>
+    <form class="cmt-add" id="cmForm"><textarea class="input" id="cmText" rows="2" maxlength="1000" placeholder="Write a comment…" aria-label="Comment"></textarea><button class="btn accent" type="submit">Post</button></form>`, m => {
+    $$("[data-close]", m).forEach(x => x.onclick = closeModal); paint();
+    const post = () => { const text = $("#cmText").value.trim(); if (!text) return; const cid = uidGen(), c = { by: ME.email, name: ME.name, text, at: Date.now() };
+      T.places[pid] = { ...T.places[pid], comments: { ...(T.places[pid].comments || {}), [cid]: c } }; updateDoc(doc(fs, tp("places/" + pid)), { ["comments." + cid]: c }).catch(fail);
+      $("#cmText").value = ""; paint(); renderTrip(); };
+    $("#cmForm").onsubmit = e => { e.preventDefault(); post(); };
+    $("#cmText").onkeydown = e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); post(); } };
+    $("#cmList").onclick = e => { const d = e.target.closest("[data-cdel]"); if (!d) return; const cid = d.dataset.cdel, cm = { ...(T.places[pid].comments || {}) }; delete cm[cid];
+      T.places[pid] = { ...T.places[pid], comments: cm }; updateDoc(doc(fs, tp("places/" + pid)), { ["comments." + cid]: deleteField() }).catch(fail); paint(); renderTrip(); };
+    setTimeout(() => $("#cmText")?.focus(), 30);
+  });
+}
+// one click handler for comment buttons anywhere in the trip
+document.addEventListener("click", e => { const b = e.target.closest("[data-cmt]"); if (b && cur) { e.preventDefault(); e.stopPropagation(); commentsModal(b.dataset.cmt); } }, true);
+
+// ================================================================ QUICK VOTES
+function pollsHtml() {
+  const polls = Object.entries(T.polls || {}).sort((a, b) => (a[1].closed ? 1 : 0) - (b[1].closed ? 1 : 0) || (b[1].at || 0) - (a[1].at || 0));
+  return `<div class="row between" style="margin-top:4px"><h2>Quick votes</h2><button class="btn small" type="button" id="newPoll">+ New vote</button></div>
+    ${polls.map(([id, p]) => {
+      const votes = p.votes || {}, total = Object.keys(votes).length, mine = votes[ekey(ME.email)];
+      const counts = Object.fromEntries((p.opts || []).map(o => [o.id, Object.entries(votes).filter(([, v]) => v === o.id).map(([k]) => k)]));
+      const top = Math.max(0, ...Object.values(counts).map(x => x.length));
+      const waiting = members().filter(e => !votes[ekey(e)]);
+      return `<div class="card poll ${p.closed ? "closed" : ""}" data-poll="${id}"><div class="row between"><h3>${esc(p.q)}</h3>${p.closed ? `<span class="pill">Decided</span>` : ""}</div>
+        <div class="poll-opts">${(p.opts || []).map(o => { const who = counts[o.id] || [], pct = total ? who.length / total * 100 : 0, win = p.closed && who.length === top && top > 0;
+          return `<button type="button" class="poll-opt ${mine === o.id ? "mine" : ""} ${win ? "win" : ""}" data-vote="${o.id}" ${p.closed ? "disabled" : ""}><i style="width:${pct}%"></i><span class="po-t">${win ? "🏆 " : ""}${esc(o.text)}</span><span class="po-n">${who.map(k => esc(nameOf(k.replace(/,/g, ".")))).join(", ")}</span></button>`; }).join("")}</div>
+        <div class="row between"><span class="hint">${esc(nameOf(p.by))} asked${!p.closed && waiting.length ? ` · waiting on ${waiting.map(e => esc(nameOf(e))).join(", ")}` : ""}</span>
+          <span class="row" style="gap:6px">${p.by === ME.email || isOwner() ? `${p.closed ? "" : `<button class="btn ghost small" type="button" data-pclose>Close vote</button>`}<button class="iconbtn del" type="button" data-pdel aria-label="Delete vote">×</button>` : ""}</span></div></div>`; }).join("") || `<p class="hint">Can't decide between two restaurants, or which day trip? Start a quick vote and everyone picks.</p>`}`;
+}
+function pollModal() {
+  let opts = ["", ""];
+  const names = placeList().map(p => p.name);
+  const paint = () => { $("#pmOpts").innerHTML = opts.map((o, i) => `<div class="row" style="gap:6px"><input class="input grow" data-oi="${i}" value="${esc(o)}" list="pollPlaces" placeholder="Option ${i + 1}" maxlength="80" aria-label="Option ${i + 1}">${opts.length > 2 ? `<button class="iconbtn del" type="button" data-or="${i}" aria-label="Remove option">×</button>` : ""}</div>`).join(""); };
+  openModal(`<div class="row between"><h2>New vote</h2><button class="iconbtn" type="button" data-close aria-label="Close">×</button></div>
+    <label class="field" for="pmQ">Question<input id="pmQ" maxlength="100" placeholder="e.g. Dinner on Saturday?"></label>
+    <datalist id="pollPlaces">${names.map(n => `<option value="${esc(n)}">`).join("")}</datalist>
+    <div class="field"><span>Options <span class="hint" style="display:inline">(type anything, or pick a saved place)</span></span><div id="pmOpts" style="display:grid;gap:6px"></div><button class="linkbtn" type="button" id="pmAdd" style="justify-self:start">+ Add option</button></div>
+    <p class="hint" id="pmMsg"></p>
+    <div class="row" style="justify-content:flex-end"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn accent" type="button" id="pmGo">Start vote</button></div>`, m => {
+    $$("[data-close]", m).forEach(x => x.onclick = closeModal); paint();
+    $("#pmAdd").onclick = () => { if (opts.length >= 8) return; opts.push(""); paint(); $(`[data-oi="${opts.length - 1}"]`, m)?.focus(); };
+    $("#pmOpts").oninput = e => { const i = e.target.dataset.oi; if (i != null) opts[+i] = e.target.value; };
+    $("#pmOpts").onclick = e => { const r = e.target.closest("[data-or]"); if (r) { opts.splice(+r.dataset.or, 1); paint(); } };
+    $("#pmGo").onclick = () => {
+      const q = $("#pmQ").value.trim(), o = opts.map(x => x.trim()).filter(Boolean);
+      if (!q) { $("#pmMsg").textContent = "Add a question."; return; } if (o.length < 2) { $("#pmMsg").textContent = "Add at least two options."; return; }
+      const id = uidGen(), poll = { q: q.slice(0, 100), opts: o.map(t => ({ id: uidGen(), text: t.slice(0, 80), pid: placeList().find(p => p.name === t)?.id || "" })), votes: {}, by: ME.email, at: Date.now(), closed: false };
+      T.polls[id] = poll; save(tp("polls/" + id), poll, 0); closeModal(); renderTrip();
+    };
+    setTimeout(() => $("#pmQ")?.focus(), 30);
+  });
+}
+function wirePolls(v) {
+  $("#newPoll").onclick = pollModal;
+  v.addEventListener("click", e => {
+    const card = e.target.closest("[data-poll]"); if (!card) return; const id = card.dataset.poll, p = T.polls[id]; if (!p) return;
+    const vb = e.target.closest("[data-vote]");
+    if (vb) { const k = ekey(ME.email), on = (p.votes || {})[k] !== vb.dataset.vote, votes = { ...(p.votes || {}) }; if (on) votes[k] = vb.dataset.vote; else delete votes[k];
+      T.polls[id] = { ...p, votes }; updateDoc(doc(fs, tp("polls/" + id)), { ["votes." + k]: on ? vb.dataset.vote : deleteField() }).catch(fail); renderTrip(); return; }
+    if (e.target.closest("[data-pclose]")) { T.polls[id] = { ...p, closed: true }; updateDoc(doc(fs, tp("polls/" + id)), { closed: true }).catch(fail); renderTrip(); return; }
+    if (e.target.closest("[data-pdel]")) { if (!confirmTap(e.target.closest("[data-pdel]"))) return; delete T.polls[id]; remove(tp("polls/" + id)); renderTrip(); }
+  });
+}
+// tap once to arm, again to confirm
+function confirmTap(btn) { if (btn.dataset.armed) return true; btn.dataset.armed = "1"; btn.textContent = "Delete?"; btn.style.width = "auto"; setTimeout(() => { if (btn.isConnected) { delete btn.dataset.armed; btn.textContent = "×"; btn.style.width = ""; } }, 3000); return false; }
+
+// ================================================================ DUPLICATE A TRIP
+function duplicateModal() {
+  const t = T.trip;
+  openModal(`<div class="row between"><h2>Duplicate trip</h2><button class="iconbtn" type="button" data-close aria-label="Close">×</button></div>
+    <p class="hint">Makes a new trip from this one, as a starting point. You'll be its planner.</p>
+    <label class="field" for="dpName">Name<input id="dpName" maxlength="60" value="${esc((t.name || "Trip") + " (copy)")}"></label>
+    <label class="field" for="dpStart">Starts on<input id="dpStart" type="date" value="${esc(t.start || "")}"></label>
+    <div class="ics-opts">${[["places", "Places and the day-by-day plan", true], ["days", "Day notes, note bubbles and day colors", true], ["notes", "Notes", true], ["todo", "To-do list (unchecked)", true], ["packing", "My packing list (unchecked)", true], ["bookings", "Bookings, marked as estimates", false], ["people", "Invite the same people", false]]
+      .map(([k, l, on]) => `<label class="ics-opt"><input type="checkbox" data-dp="${k}" ${on ? "checked" : ""}><span><b>${l}</b></span></label>`).join("")}</div>
+    <p class="hint">Dates move with the new start date. Spending, photos, comments and votes stay with the original.</p>
+    <p class="hint" id="dpMsg" role="status"></p>
+    <div class="row" style="justify-content:flex-end"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn accent" type="button" id="dpGo">Duplicate</button></div>`, m => {
+    $$("[data-close]", m).forEach(x => x.onclick = closeModal);
+    $("#dpGo").onclick = async () => {
+      const inc = Object.fromEntries($$("[data-dp]", m).map(c => [c.dataset.dp, c.checked])), go = $("#dpGo"); go.disabled = true; $("#dpMsg").textContent = "Copying…";
+      const start = $("#dpStart").value, off = validIso(start) && validIso(t.start) ? daysBetween(t.start, start) : 0, sh = d => validIso(d) && off ? addDays(d, off) : d;
+      const nid = uidGen(), people = inc.people ? members() : [ME.email];
+      const trip = { name: ($("#dpName").value.trim() || t.name || "Trip").slice(0, 60), dest: t.dest || null, dests: tripDests(t), start: sh(t.start || ""), end: sh(t.end || ""), members: people,
+        names: Object.fromEntries(people.map(e => [ekey(e), nameOf(e)])), owner: ME.uid, ownerEmail: ME.email, created: Date.now(), currency: homeCur(), budget: num(t.budget), notes: inc.notes ? t.notes || "" : "", cover: t.cover || "", coverCredit: t.coverCredit || "", mode: t.mode || "walk" };
+      try {
+        await setDoc(doc(fs, "trips/" + nid), trip);
+        const writes = [];
+        if (inc.places) for (const [id, p] of Object.entries(T.places)) { const { comments, visited, hours, ...rest } = p; writes.push([`trips/${nid}/places/${id}`, { ...rest, day: sh(p.day || ""), hearts: {} }]); }
+        if (inc.days) for (const [d, x] of Object.entries(T.days)) { const { journal, ...rest } = x || {}; writes.push([`trips/${nid}/days/${sh(d)}`, rest]); }
+        if (inc.notes) for (const [id, n] of Object.entries(T.notes)) writes.push([`trips/${nid}/notes/${id}`, n]);
+        if (inc.todo) for (const [id, c] of Object.entries(T.checklist)) writes.push([`trips/${nid}/checklist/${id}`, { ...c, done: false, due: sh(c.due || "") }]);
+        if (inc.bookings) for (const [id, b] of Object.entries(T.bookings)) { const nb = { ...b, planned: true, conf: "", cancelBy: sh(b.cancelBy || "") };
+          ["depDate", "arrDate", "checkIn", "checkOut", "date"].forEach(k => { if (nb[k]) nb[k] = sh(nb[k]); }); if (nb.legs) nb.legs = nb.legs.map(l => ({ ...l, depDate: sh(l.depDate), arrDate: sh(l.arrDate) }));
+          writes.push([`trips/${nid}/bookings/${id}`, nb]); }
+        for (let i = 0; i < writes.length; i += 400) { const bt = writeBatch(fs); writes.slice(i, i + 400).forEach(([path, data]) => bt.set(doc(fs, path), data)); await bt.commit(); }
+        if (inc.packing && T.packing && !T.packing.empty) await setDoc(doc(fs, `users/${ME.uid}/packing/${nid}`), { groups: (T.packing.groups || []).map(g => ({ ...g, items: (g.items || []).map(it => ({ ...it, done: false })) })) });
+        closeModal(); toast("Trip duplicated."); location.hash = `#/t/${nid}/overview`;
+      } catch (e) { go.disabled = false; $("#dpMsg").textContent = e.code === "permission-denied" ? "Your account can't create trips. Add your email to tripCreator in the Firebase rules." : "Couldn't duplicate the trip. Check your connection."; }
+    };
+  });
+}
+
+// ================================================================ COUNTRY GUIDE
+let CG = null, cgLoading = null, cgPick = "";
+const loadCG = () => CG ? Promise.resolve(CG) : (cgLoading ||= fetch("countries.json").then(r => r.json()).then(j => { CG = j; if (cur?.tab === "guide") renderTrip(); return j; }).catch(() => { cgLoading = null; return null; }));
+const cgFind = n => { if (!CG || !n) return null; const q = String(n).trim().toLowerCase(); return CG.countries.find(c => c.name.toLowerCase() === q || c.aka.some(a => a.toLowerCase() === q)) || null; };
+function tripCountries() {
+  const seen = new Map();
+  const add = n => { const c = cgFind(n); if (c && !seen.has(c.name)) seen.set(c.name, c); };
+  tripDests(T.trip).forEach(d => { add(d.country); add(d.name); });
+  placeList().forEach(p => add(p.country));
+  Object.values(T.bookings).filter(b => b.kind === "flight").forEach(b => flightSegs(b).forEach(l => { const ap = airportOf(l.to); if (ap && CG) { const c = CG.countries.find(x => x.cc === ap.cc); if (c) add(c.name); } }));
+  return [...seen.values()].filter(c => c.name !== "United States");
+}
+loadCG();
+function viewGuide(v) {
+  if (!CG) { v.innerHTML = `<p class="hint">Loading…</p>`; loadCG(); return; }
+  const list = tripCountries(), pick = cgFind(cgPick);
+  const shown = pick && !list.includes(pick) ? [...list, pick] : list;
+  const us = ["A", "B"], plugs = c => c.plugs.split(",").map(x => x.trim());
+  const card = c => {
+    const fits = plugs(c).some(p => us.includes(p)), hiV = c.v >= 200;
+    const ph = CG.phrases[c.lang] || [];
+    return `<section class="card cg" id="cg-${esc(c.name.replace(/\W+/g, "-"))}"><div class="row between"><h2>${esc(c.name)}</h2><span class="hint">${esc(c.cur)} · drives on the ${esc(c.drive)}</span></div>
+      <div class="cg-grid">
+        <div class="cg-tile"><span class="k">Plugs &amp; power</span><b>Type ${esc(c.plugs)} · ${c.v}V</b><span class="hint">${fits ? "Your US plugs fit." : `Bring a type ${esc(plugs(c)[0])} adapter.`} ${hiV ? "Phone and laptop chargers handle the voltage, but US hair tools may not." : ""}</span></div>
+        <div class="cg-tile"><span class="k">Emergency</span><b>${esc(c.em)}</b><span class="hint">Save these in your phone.</span></div>
+        <div class="cg-tile"><span class="k">Tipping</span><span>${esc(c.tip)}</span></div>
+      </div>
+      ${c.entry.length ? `<div class="cg-entry"><span class="k">Before you go <span class="hint" style="display:inline;text-transform:none;letter-spacing:0;font-weight:500">for US passports</span></span><ul>${c.entry.map(e => `<li>${esc(e.t)}${e.u ? ` <a class="ext" href="${esc(e.u)}" target="_blank" rel="noopener">Official site ↗</a>` : ""}</li>`).join("")}
+        <li>Many countries need your passport valid 3–6 months past your trip. <a class="ext" href="https://travel.state.gov/content/travel/en/international-travel/International-Travel-Country-Information-Pages.html" target="_blank" rel="noopener">US State Dept country info ↗</a></li></ul></div>` : ""}
+      ${ph.length ? `<div class="cg-ph"><span class="k">Handy phrases</span><table>${ph.map(([en, loc, rom]) => `<tr><td>${esc(en)}</td><td><b>${esc(loc)}</b>${rom ? `<span class="hint">${esc(rom)}</span>` : ""}</td></tr>`).join("")}</table></div>` : ""}</section>`;
+  };
+  v.innerHTML = `<div class="row between"><h2>Country guide</h2><select class="input" id="cgAdd" style="width:auto" aria-label="Look up another country"><option value="">Look up another country…</option>${CG.countries.map(c => `<option ${pick?.name === c.name ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select></div>
+    <p class="hint">Plugs, emergency numbers, tipping, entry steps and a few phrases for the countries on this trip. Entry rules change, so always confirm on the official sites before you fly.</p>
+    ${shown.length > 1 ? `<div class="chips">${shown.map(c => `<a class="chip" href="#cg-${esc(c.name.replace(/\W+/g, "-"))}" data-jump>${esc(c.name)}</a>`).join("")}</div>` : ""}
+    ${shown.map(card).join("") || `<div class="empty">Add your destinations in Overview (or places with a country) and their guides show up here.</div>`}`;
+  $("#cgAdd").onchange = e => { cgPick = e.target.value; renderTrip(); setTimeout(() => document.getElementById("cg-" + cgPick.replace(/\W+/g, "-"))?.scrollIntoView({ behavior: "smooth" }), 50); };
+  v.onclick = e => { const a = e.target.closest("[data-jump]"); if (a) { e.preventDefault(); document.querySelector(a.getAttribute("href"))?.scrollIntoView({ behavior: reduceMotion() ? "auto" : "smooth" }); } };
+}
+
+// ================================================================ MEMORY BOOK (PDF)
+function memoryHtml() {
+  const t = T.trip, days = tripDays(), range = validIso(t.start) ? `${fmtD(t.start, { month: "long", day: "numeric" })} – ${fmtD(t.end, { month: "long", day: "numeric", year: "numeric" })}` : "";
+  let kmTot = 0, nPlaces = 0;
+  const countries = new Set(placeList().filter(p => days.includes(p.day) && p.country).map(p => p.country));
+  let body = "";
+  days.forEach((iso, i) => {
+    const ps = dayPlaces(iso), went = ps.some(p => p.visited) ? ps.filter(p => p.visited) : ps;
+    const pts = went.filter(hasPt); for (let k = 1; k < pts.length; k++) kmTot += km(pts[k - 1], pts[k]); nPlaces += went.length;
+    const photos = Object.values(T.photos).filter(p => p.day === iso), j = T.days[iso]?.journal || "", notes = [T.days[iso]?.notes, ...dayCards(iso).map(c => c.text)].filter(Boolean);
+    if (!went.length && !photos.length && !j && !notes.length) return;
+    const col = colVal(dayColor(iso, i));
+    body += `<article class="mb-day"><header><span class="mb-n" style="background:${col}">${i + 1}</span><div><h2>${esc(fmtD(iso, { weekday: "long", month: "long", day: "numeric" }))}</h2><span>${esc([...new Set(went.map(p => p.city).filter(Boolean))].join(" · "))}</span></div></header>
+      ${photos.length ? `<div class="mb-photos n${Math.min(photos.length, 4)}">${photos.slice(0, 4).map(p => `<img src="${esc(p.data)}" alt="">`).join("")}</div>` : ""}
+      ${j ? `<blockquote class="mb-journal">${esc(j).replace(/\n/g, "<br>")}</blockquote>` : ""}
+      ${went.length ? `<ul class="mb-places">${went.map(p => `<li>${photoSrcOf(p) ? `<img src="${esc(photoSrcOf(p))}" alt="">` : `<span class="mb-ph">${esc(p.name.charAt(0))}</span>`}<span><b>${esc(p.name)}</b>${p.notes ? `<br><i>${esc(p.notes)}</i>` : ""}</span></li>`).join("")}</ul>` : ""}
+      ${notes.length ? `<p class="mb-notes">${notes.map(n => esc(n)).join("<br>")}</p>` : ""}</article>`;
+  });
+  return `<section class="mb-cover">${t.cover ? `<img src="${esc(t.cover)}" alt="">` : ""}<div><h1>${esc(t.name || "Our trip")}</h1><p>${esc(range)}</p><p>${members().map(e => esc(nameOf(e))).join(" & ")}</p></div></section>
+    <section class="mb-stats"><div><b>${days.length}</b><span>days</span></div><div><b>${nPlaces}</b><span>places</span></div><div><b>${Math.round(kmTot)}</b><span>km between stops</span></div><div><b>${countries.size || tripDests(t).length}</b><span>${(countries.size || tripDests(t).length) === 1 ? "country" : "countries"}</span></div></section>
+    ${body || `<p class="hint">Add journal entries on the Today page, day photos and visited places, and they'll fill this book.</p>`}`;
+}
+
+// ================================================================ SETTLE UP: payment links
+const payOf = e => (T.trip?.pay || {})[ekey(e)] || {};
+function payLinks(t) {
+  const p = payOf(t.to), amt = t.amt.toFixed(2), cur = homeCur(), note = encodeURIComponent((T.trip.name || "Trip") + " – settle up"), out = [];
+  if (p.venmo && cur === "USD") out.push(`<a class="btn small pay venmo" href="https://venmo.com/?txn=pay&audience=private&recipients=${encodeURIComponent(p.venmo.replace(/^@/, ""))}&amount=${amt}&note=${note}" target="_blank" rel="noopener">Venmo</a>`);
+  if (p.paypal) out.push(`<a class="btn small pay paypal" href="https://paypal.me/${encodeURIComponent(p.paypal.replace(/^.*paypal\.me\//i, ""))}/${amt}${cur}" target="_blank" rel="noopener">PayPal</a>`);
+  if (p.cashapp && cur === "USD") out.push(`<a class="btn small pay cashapp" href="https://cash.app/$${encodeURIComponent(p.cashapp.replace(/^\$/, ""))}/${amt}" target="_blank" rel="noopener">Cash App</a>`);
+  if (p.zelle) out.push(`<span class="hint">Zelle: ${esc(p.zelle)}</span>`);
+  return out.join("");
+}
+function payModal() {
+  const p = payOf(ME.email);
+  openModal(`<div class="row between"><h2>How to pay you</h2><button class="iconbtn" type="button" data-close aria-label="Close">×</button></div>
+    <p class="hint">Add any of these and anyone who owes you gets a one-tap button with the amount filled in. Everyone on this trip can see them.</p>
+    <label class="field" for="pyV">Venmo username<input id="pyV" value="${esc(p.venmo || "")}" placeholder="@your-name" maxlength="40"></label>
+    <label class="field" for="pyP">PayPal.me name<input id="pyP" value="${esc(p.paypal || "")}" placeholder="yourname" maxlength="60"></label>
+    <label class="field" for="pyC">Cash App $cashtag<input id="pyC" value="${esc(p.cashapp || "")}" placeholder="$yourname" maxlength="40"></label>
+    <label class="field" for="pyZ">Zelle (phone or email to show)<input id="pyZ" value="${esc(p.zelle || "")}" maxlength="60"></label>
+    <div class="row" style="justify-content:flex-end"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn accent" type="button" id="pySave">Save</button></div>`, m => {
+    $$("[data-close]", m).forEach(x => x.onclick = closeModal);
+    $("#pySave").onclick = () => { const v = { venmo: $("#pyV").value.trim(), paypal: $("#pyP").value.trim(), cashapp: $("#pyC").value.trim(), zelle: $("#pyZ").value.trim() };
+      T.trip.pay = { ...(T.trip.pay || {}), [ekey(ME.email)]: v }; updateDoc(doc(fs, "trips/" + cur.id), { ["pay." + ekey(ME.email)]: v }).catch(fail); closeModal(); renderTrip(); };
+  });
 }
 
 // ================================================================ BUDGET
@@ -2007,13 +2503,14 @@ function viewBudget(v) {
     ${budget ? `<div class="meter ${spent + planned > budget ? "over" : ""}"><i style="width:${Math.min(100, (spent + planned) / budget * 100)}%"></i></div>` : ""}
     ${needRate.length ? `<p class="banner">${needRate.length} cost${needRate.length === 1 ? "" : "s"} in another currency still need${needRate.length === 1 ? "s" : ""} an exchange rate, so ${needRate.length === 1 ? "it isn't" : "they aren't"} in the totals yet. Tap ${needRate.length === 1 ? "it" : "them"} below to add one.</p>` : ""}
     ${Object.keys(byCur).length > 1 ? `<p class="hint">Spent by currency: ${Object.entries(byCur).map(([c, v]) => `<b>${fmtCur(v, c)}</b>`).join(" · ")} <span style="opacity:.8">(totals above in ${esc(homeCur())})</span></p>` : ""}
-    ${n > 1 ? `<div class="card" style="display:grid;gap:10px"><h3>Who owes whom</h3>
-      ${transfers.length ? `<div class="owes">${transfers.map(t => `<div class="owe">${avatar(t.from)}<span><b>${esc(nameOf(t.from))}</b> owes <b>${esc(nameOf(t.to))}</b></span><span class="amt">${money(t.amt, { cents: true })}</span><button class="btn ghost small" type="button" data-settle="${esc(t.from)}|${esc(t.to)}|${t.amt}">Settle up</button></div>`).join("")}</div>` : `<p class="hint">Everyone's even.</p>`}
+    ${n > 1 ? `<div class="card" style="display:grid;gap:10px"><div class="row between"><h3>Who owes whom</h3><button class="linkbtn" type="button" id="payMe">${Object.values(payOf(ME.email)).some(Boolean) ? "Edit how to pay me" : "Add how to pay me (Venmo, PayPal…)"}</button></div>
+      ${transfers.length ? `<div class="owes">${transfers.map(t => `<div class="owe">${avatar(t.from)}<span><b>${esc(nameOf(t.from))}</b> owes <b>${esc(nameOf(t.to))}</b></span><span class="amt">${money(t.amt, { cents: true })}</span><button class="btn ghost small" type="button" data-settle="${esc(t.from)}|${esc(t.to)}|${t.amt}">Mark paid</button>${t.from === ME.email && payLinks(t) ? `<div class="pay-row">Pay ${esc(nameOf(t.to))}: ${payLinks(t)}</div>` : ""}</div>`).join("")}</div>` : `<p class="hint">Everyone's even.</p>`}
       <div style="display:grid;gap:4px">${members().map(e => `<div class="bal">${avatar(e)}<span>${esc(nameOf(e))}</span><b style="color:${bal[e] > 0.005 ? "var(--leaf)" : bal[e] < -0.005 ? "var(--accent)" : "var(--muted)"}">${bal[e] > 0.005 ? "gets back " : bal[e] < -0.005 ? "owes " : ""}${money(Math.abs(bal[e]), { cents: true })}</b></div>`).join("")}</div></div>` : `<p class="hint">Invite people with <b>Share</b> to split costs between you.</p>`}
     ${Object.keys(byCat).length ? `<div class="card" style="display:grid;gap:10px"><h3>By category</h3><div class="bars">${CATS.filter(c => byCat[c]).map(c => `<div class="bar"><span>${c}</span><span class="track"><i style="width:${byCat[c].s / maxC * 100}%;background:var(--accent)"></i><i style="width:${byCat[c].p / maxC * 100}%;background:var(--accent-soft)"></i></span><b>${money(byCat[c].s + byCat[c].p)}</b></div>`).join("")}</div><p class="hint"><span style="color:var(--accent)">■</span> spent · <span style="color:var(--accent-soft)">■</span> planned</p></div>` : ""}
     <div class="card"><h3 style="margin-bottom:6px">All costs</h3>${items.length ? `<table class="tbl"><thead><tr><th>Date</th><th>What</th><th>Paid by</th><th class="num">Amount</th></tr></thead><tbody>
       ${items.map(x => `<tr class="${x.planned ? "planned" : ""}" data-src="${x.src}" data-id="${x.id}" style="cursor:pointer"><td>${esc(fmtD(x.date) || "—")}</td><td>${x.kind === "payment" ? `<b>${esc(nameOf(x.paidBy))}</b> paid <b>${esc(nameOf(x.to))}</b>` : esc(x.desc || "")}<br><span class="hint" style="font-size:11.5px">${x.kind === "payment" ? "Settle up" : esc(x.category || "")}${x.src === "booking" ? " · booking" : ""}${x.planned ? " · estimate" : ""}</span></td><td>${x.paidBy ? esc(nameOf(x.paidBy)) : "—"}</td><td class="num">${x.cur !== homeCur() ? `<span class="hint" style="display:block;font-size:11.5px">${fmtCur(x.orig, x.cur, x.orig % 1 !== 0)}</span>` : ""}<b>${x.noRate ? "needs rate" : (x.approx ? "~" : "") + money(x.amount, { cents: x.amount % 1 !== 0 })}</b></td></tr>`).join("")}</tbody></table>` : `<div class="empty">No costs yet. Add expenses as you go, or add costs to your bookings.</div>`}</div>`;
   $("#addExp").onclick = () => expenseModal(null);
+  $("#payMe") && ($("#payMe").onclick = payModal);
   $("#setBudget").onclick = () => { location.hash = `#/t/${cur.id}/overview`; setTimeout(() => $("#ovBudget")?.focus(), 80); };
   v.addEventListener("click", e => {
     const s = e.target.closest("[data-settle]");
@@ -2256,19 +2753,22 @@ function printHtml() {
   return h;
 }
 function viewPrint(v) {
+  const memory = PRINT.mode === "memory";
   const opts = [["itinerary", "Itinerary"], ["sketches", "Route sketches"], ["bookings", "Bookings"], ["places", "Unscheduled places"], ["budget", "Budget"], ["todo", "To-do"], ["notes", "Notes"], ["packing", "My packing list"], ["photos", "Photos"]];
   v.innerHTML = `<div class="print-bar no-print"><div class="row between"><div><h2>Export PDF</h2><p class="hint">Pick what to include, then <b>Save as PDF</b>. In the print window choose <b>Save as PDF</b> as the printer (on iPhone: Share → Print, then Share again → Save to Files).</p></div>
       <div class="row"><a class="btn ghost" href="#/t/${cur.id}/plan">Back</a><button class="btn accent" type="button" id="doPrint">Save as PDF</button></div></div>
-      <div class="chips">${opts.map(([k, l]) => `<label class="chip ${PRINT[k] ? "on" : ""}"><input type="checkbox" data-po="${k}" ${PRINT[k] ? "checked" : ""} hidden>${l}</label>`).join("")}</div></div>
-    <div class="pb" id="pb">${printHtml()}</div>`;
+      <div class="seg" role="group" aria-label="Book style" style="justify-self:start"><button type="button" data-pmode="planner" aria-pressed="${!memory}">Trip planner</button><button type="button" data-pmode="memory" aria-pressed="${memory}">Memory book</button></div>
+      ${memory ? `<p class="hint">A keepsake: each day's photos, journal entry, the places you visited and your notes.</p>` : `<div class="chips">${opts.map(([k, l]) => `<label class="chip ${PRINT[k] ? "on" : ""}"><input type="checkbox" data-po="${k}" ${PRINT[k] ? "checked" : ""} hidden>${l}</label>`).join("")}</div>`}</div>
+    <div class="pb ${memory ? "mb" : ""}" id="pb">${memory ? memoryHtml() : printHtml()}</div>`;
+  v.querySelectorAll("[data-pmode]").forEach(b => b.onclick = () => { PRINT.mode = b.dataset.pmode; try { localStorage.setItem("trips-print", JSON.stringify(PRINT)); } catch {} renderTrip(); });
   v.querySelectorAll("[data-po]").forEach(c => c.onchange = () => { PRINT[c.dataset.po] = c.checked; try { localStorage.setItem("trips-print", JSON.stringify(PRINT)); } catch {} renderTrip(); });
-  $("#doPrint").onclick = () => { const old = document.title; document.title = (T.trip.name || "Trip") + " – trip book"; window.print(); setTimeout(() => { document.title = old; }, 1000); };
+  $("#doPrint").onclick = () => { const old = document.title; document.title = (T.trip.name || "Trip") + (memory ? " – memory book" : " – trip book"); window.print(); setTimeout(() => { document.title = old; }, 1000); };
 }
 
 // ================================================================ NOTES
 function viewNotes(v) {
   const notes = Object.entries(T.notes || {}).sort((a, b) => (b[1].pinned ? 1 : 0) - (a[1].pinned ? 1 : 0) || (b[1].updated || b[1].created || 0) - (a[1].updated || a[1].created || 0));
-  v.innerHTML = `<div class="row between"><h2>Notes</h2><button class="btn accent small" type="button" id="addNote">+ New note</button></div>
+  v.innerHTML = `${pollsHtml()}<div class="row between" style="margin-top:8px"><h2>Notes</h2><button class="btn accent small" type="button" id="addNote">+ New note</button></div>
     <div class="card note"><div class="row between"><h3>Trip notes</h3><span class="hint">shared with everyone on the trip</span></div>
       <textarea class="input note-body" id="tripNotes" rows="${Math.min(14, Math.max(3, (T.trip.notes || "").split("\n").length + 1))}" maxlength="5000" placeholder="Ideas, links, things to remember…">${esc(T.trip.notes || "")}</textarea></div>
     ${notes.map(([id, n]) => `<div class="card note" data-id="${id}">
@@ -2278,6 +2778,7 @@ function viewNotes(v) {
       <textarea class="input note-body" id="nb-${id}" rows="${Math.min(14, Math.max(3, (n.body || "").split("\n").length + 1))}" maxlength="8000" placeholder="Write anything…">${esc(n.body || "")}</textarea>
       <span class="hint" style="font-size:11.5px">${n.by ? "By " + esc(nameOf(n.by)) + " · " : ""}${n.updated ? "edited " + esc(new Date(n.updated).toLocaleDateString("en-US", { month: "short", day: "numeric" })) : ""}</span></div>`).join("")}
     ${notes.length ? "" : `<p class="hint">Add notes for anything: restaurants to try, packing lists, phrases, recommendations from friends.</p>`}`;
+  wirePolls(v);
   const upd = debounce(val => updateDoc(doc(fs, "trips/" + cur.id), { notes: val.slice(0, 5000) }).catch(fail), 600);
   $("#tripNotes").oninput = e => { T.trip.notes = e.target.value; upd(e.target.value); };
   $("#addNote").onclick = () => { const id = uidGen(); T.notes[id] = { title: "", body: "", by: ME.email, created: Date.now(), updated: Date.now(), pinned: false }; save(tp("notes/" + id), T.notes[id], 0); renderTrip(); $("#nt-" + id)?.focus(); };
@@ -2315,8 +2816,10 @@ function viewOverview(v) {
       <div class="row"><button class="btn ghost small" type="button" id="ovCover">New cover photo</button><label class="btn ghost small file-btn">Upload cover<input type="file" id="ovCoverFile" accept="image/*"></label>${t.coverCredit ? `<span class="hint">${esc(t.coverCredit)}</span>` : ""}</div></div>
     <div class="card" style="display:grid;gap:10px"><div class="row between"><h3>People</h3><button class="btn ghost small" type="button" id="ovInvite">Share & invite</button></div>
       ${members().map(e => `<div class="bal">${avatar(e)}<span><b>${esc(nameOf(e))}</b> <span class="hint" style="display:inline">${esc(e)}</span></span><span class="hint">${t.ownerEmail === e ? "Planner" : ""}</span></div>`).join("")}</div>
+    <div class="card row between"><span class="hint">Use this trip as a starting point for another one.</span><button class="btn ghost small" type="button" id="ovDup">Duplicate trip</button></div>
     <div class="card row between"><span class="hint">${isOwner() ? "Deleting removes this trip for everyone." : "Leaving removes you from this trip. You can be invited back."}</span><button class="btn danger" type="button" id="ovDanger">${isOwner() ? "Delete trip" : "Leave trip"}</button></div>`;
   const tripRef = doc(fs, "trips/" + cur.id);
+  $("#ovDup").onclick = duplicateModal;
   const upd = debounce(patch => updateDoc(tripRef, patch).catch(fail), 600);
   $("#ovName").oninput = e => { T.trip.name = e.target.value; upd({ name: e.target.value.slice(0, 60) }); $("#crumb").textContent = e.target.value; };
   $("#ovBudget").oninput = e => { T.trip.budget = num(e.target.value); upd({ budget: num(e.target.value) }); };
