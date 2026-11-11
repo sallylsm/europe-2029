@@ -45,8 +45,11 @@ try { const t = JSON.parse(localStorage.getItem("e29-theme") || "{}"), m = t.mod
       <div class="font-pick" id="fontPick"></div>
       <h3>Mode</h3>
       <div class="seg" id="modeSeg"><button type="button" data-mode="auto">Auto</button><button type="button" data-mode="light">Light</button><button type="button" data-mode="dark">Dark</button></div>
+      <h3>Temperature</h3>
+      <div class="seg" id="tempSeg"><button type="button" data-temp="F">°F</button><button type="button" data-temp="C">°C</button></div>
       <h3>Map labels</h3>
       <div class="seg" id="labelSeg"><button type="button" data-labels="en">English</button><button type="button" data-labels="both">Both</button><button type="button" data-labels="local">Local</button></div>
+      <button class="btn ghost small" id="loyBtn" type="button">🎟 Loyalty numbers</button>
       <button class="btn ghost small" id="signOut" type="button">Sign out</button>
     </div>
   </div>
