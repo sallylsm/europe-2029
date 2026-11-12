@@ -171,6 +171,7 @@ $("#mePop").addEventListener("click", e => {
 });
 $("#fontPick").innerHTML = Object.entries(FONTS).map(([k, f]) => `<button type="button" data-font="${k}" style="font-family:${f.b ? f.b + "," : ""}system-ui,sans-serif"><b style="font-family:${f.d ? f.d + "," : ""}system-ui,sans-serif">Aa</b>${f.label}</button>`).join("");
 $("#loyBtn").addEventListener("click", () => { $("#mePop").hidden = true; loyaltyModal(); });
+$("#accessBtn").addEventListener("click", () => { $("#mePop").hidden = true; accessModal(); });
 $("#meBtn").addEventListener("click", e => { e.stopPropagation(); Object.keys(FONTS).forEach(loadFont); const p = $("#mePop"); p.hidden = !p.hidden; $("#meBtn").setAttribute("aria-expanded", String(!p.hidden)); });
 document.addEventListener("click", () => { $("#mePop").hidden = true; $("#meBtn").setAttribute("aria-expanded", "false"); });
 darkMQ.addEventListener?.("change", applyTheme);
@@ -543,7 +544,7 @@ onAuthStateChanged(auth, async user => {
   if (!user) { ME = null; unsubHome?.(); leaveTrip(); renderGate(); return; }
   ME = { uid: user.uid, email: (user.email || "").toLowerCase(), name: (user.displayName || "").split(" ")[0] || (user.email || "").split("@")[0] };
   $("#meBtn").hidden = false; $("#meAv").textContent = ME.name.charAt(0).toUpperCase(); $("#meName").textContent = user.displayName || ME.name; $("#meEmail").textContent = ME.email;
-  subscribeHome(); subscribeLoyalty(); route();
+  subscribeHome(); subscribeLoyalty(); subscribeAccess(); route();
 });
 
 // ================================================================ ROUTING
@@ -613,7 +614,7 @@ function newTripModal() {
       const trip = { name: name.slice(0, 60), dest: dest ? destOf(dest) : null, dests, start: start || "", end: end || "",
         members: [ME.email], names: { [ekey(ME.email)]: ME.name }, owner: ME.uid, ownerEmail: ME.email, created: Date.now(), currency: "USD", budget: 0, notes: "", cover: "" };
       try { await setDoc(doc(fs, "trips/" + id), trip); }
-      catch (e) { $("#ntMsg").textContent = e.code === "permission-denied" ? "Your account can't create trips yet. Add your email to tripCreators in the Firebase rules (see the README)." : "Couldn't create the trip. Check your connection."; return; }
+      catch (e) { $("#ntMsg").textContent = e.code === "permission-denied" ? "Your account can't start trips yet. Ask whoever set up Wayfinder to add you under People & access. You can still join trips you're invited to." : "Couldn't create the trip. Check your connection."; return; }
       closeModal(); location.hash = `#/t/${id}/plan`;
       if (dest) firstPhoto({ name: dest.name, city: dest.name, lat: dest.lat, lon: dest.lon }, "auto").then(ph => { if (ph) { updateDoc(doc(fs, "trips/" + id), { cover: ph.photo || ph.photoUrl, coverCredit: ph.photoCredit || "" }).catch(() => {}); trackUnsplash(ph.dl); } });
     };
@@ -1922,7 +1923,7 @@ function gmailModal() {
 
 // ================================================================ HELP
 const HELP = [
-  ["start", "Getting started", `<p>Each trip has its own map, day-by-day plan, bookings and budget. Make one with <b>New trip</b> on the home page, then open <b>Share</b> to invite people by their Google email. Everyone on a trip can edit it, and changes show up for everyone right away.</p>
+  ["start", "Getting started", `<p>Each trip has its own map, day-by-day plan, bookings and budget. Make one with <b>New trip</b> on the home page, then open <b>Share</b> to invite people by their Google email. Everyone on a trip can edit it, and changes show up for everyone right away. Anyone with a Google account can join a trip they're invited to. To let someone <b>start their own trips</b>, add them in your picture menu → <b>People &amp; access</b>.</p>
     <p>Wide screens show sections on the left, the page in the middle and the map on the right. Use <b>List / Split / Map</b> at the top to hide the map or make it bigger. On a phone, the <b>Map</b> button switches between the two.</p>
     <p>Map labels are in English by default, even in places like Japan. To change that, tap your picture (top right) → <b>Map labels</b> and pick English, Both (English with the local name under it) or Local.</p>`],
   ["today", "Today and weather", `<p><b>Today</b> (top of the sidebar) is your during-the-trip screen: the day's weather, bookings, what's next with one-tap directions, and a checklist to tick off places as you go. Use ‹ › to look at other days. While a trip is on, Wayfinder opens straight to it.</p>
@@ -2361,7 +2362,7 @@ function duplicateModal() {
         for (let i = 0; i < writes.length; i += 400) { const bt = writeBatch(fs); writes.slice(i, i + 400).forEach(([path, data]) => bt.set(doc(fs, path), data)); await bt.commit(); }
         if (inc.packing && T.packing && !T.packing.empty) await setDoc(doc(fs, `users/${ME.uid}/packing/${nid}`), { groups: (T.packing.groups || []).map(g => ({ ...g, items: (g.items || []).map(it => ({ ...it, done: false })) })) });
         closeModal(); toast("Trip duplicated."); location.hash = `#/t/${nid}/overview`;
-      } catch (e) { go.disabled = false; $("#dpMsg").textContent = e.code === "permission-denied" ? "Your account can't create trips. Add your email to tripCreator in the Firebase rules." : "Couldn't duplicate the trip. Check your connection."; }
+      } catch (e) { go.disabled = false; $("#dpMsg").textContent = e.code === "permission-denied" ? "Your account can't start trips yet. Ask whoever set up Wayfinder to add you under People & access." : "Couldn't duplicate the trip. Check your connection."; }
     };
   });
 }
@@ -2450,6 +2451,39 @@ function payModal() {
     $$("[data-close]", m).forEach(x => x.onclick = closeModal);
     $("#pySave").onclick = () => { const v = { venmo: $("#pyV").value.trim(), paypal: $("#pyP").value.trim(), cashapp: $("#pyC").value.trim(), zelle: $("#pyZ").value.trim() };
       T.trip.pay = { ...(T.trip.pay || {}), [ekey(ME.email)]: v }; updateDoc(doc(fs, "trips/" + cur.id), { ["pay." + ekey(ME.email)]: v }).catch(fail); closeModal(); renderTrip(); };
+  });
+}
+
+// ================================================================ PEOPLE & ACCESS (who can start trips)
+let ACCESS = null, accessUnsub = null;
+function subscribeAccess() {
+  accessUnsub?.();
+  accessUnsub = onSnapshot(doc(fs, "settings/access"), s => { ACCESS = s.exists() ? s.data() : { missing: true }; $("#accessBtn").hidden = !canManage(); }, () => { ACCESS = { missing: true }; $("#accessBtn").hidden = false; });
+}
+// the rules decide for real; this only decides whether to show the screen
+const canManage = () => !ACCESS || ACCESS.missing || (ACCESS.admins || []).includes(ME.email);
+function accessModal() {
+  let list = [...(ACCESS?.creators || [])];
+  const paint = () => { $("#acList").innerHTML = list.map((e, i) => `<div class="bal">${avatar(e)}<span class="grow"><b>${esc(nameOf(e) !== e ? nameOf(e) : e)}</b>${nameOf(e) !== e ? ` <span class="hint" style="display:inline">${esc(e)}</span>` : ""}</span><button class="iconbtn del" type="button" data-ar="${i}" aria-label="Remove ${esc(e)}">×</button></div>`).join("") || `<p class="hint">Only you so far.</p>`; };
+  openModal(`<div class="row between"><h2>People & access</h2><button class="iconbtn" type="button" data-close aria-label="Close">×</button></div>
+    <p class="hint">Anyone with a Google account can sign in and edit the trips they're invited to (use <b>Share</b> on a trip). The people here can also <b>start their own trips</b>.</p>
+    <div id="acList" style="display:grid;gap:8px"></div>
+    <form class="row" id="acForm" style="gap:8px"><input class="input grow" id="acEmail" type="email" placeholder="their Google email" autocomplete="off" aria-label="Google email"><button class="btn small" type="submit">Add</button></form>
+    <p class="hint" id="acMsg" role="status"></p>
+    <div class="row" style="justify-content:flex-end"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn accent" type="button" id="acSave">Save</button></div>`, m => {
+    $$("[data-close]", m).forEach(x => x.onclick = closeModal); paint();
+    $("#acForm").onsubmit = e => { e.preventDefault(); const v = $("#acEmail").value.trim().toLowerCase();
+      if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(v)) { $("#acMsg").textContent = "That doesn't look like an email address."; return; }
+      if (v === ME.email || list.includes(v)) { $("#acMsg").textContent = "Already on the list."; return; }
+      list.push(v); $("#acEmail").value = ""; $("#acMsg").textContent = ""; paint(); };
+    $("#acList").onclick = e => { const r = e.target.closest("[data-ar]"); if (r) { list.splice(+r.dataset.ar, 1); paint(); } };
+    $("#acSave").onclick = async () => {
+      const pending = $("#acEmail").value.trim().toLowerCase(); if (/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(pending) && !list.includes(pending)) list.push(pending);
+      const admins = [...new Set([...(ACCESS?.admins || []), ME.email])];
+      try { await setDoc(doc(fs, "settings/access"), { admins, creators: list, updated: Date.now() }); closeModal(); toast("Saved. They can start trips now."); }
+      catch (e) { $("#acMsg").innerHTML = e.code === "permission-denied" ? "Only the app's admin can change this. If that's you, put your email in <code>admin()</code> in the Firebase rules (one time)." : "Couldn't save. Check your connection."; }
+    };
+    setTimeout(() => $("#acEmail")?.focus(), 30);
   });
 }
 
