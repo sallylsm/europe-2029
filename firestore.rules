@@ -1,0 +1,55 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() { return request.auth != null && request.auth.token.email_verified == true; }
+    function me() { return request.auth.token.email.lower(); }
+
+    // ---- EDIT THESE TWO LISTS (lowercase emails) ----
+    // People who can use the original Europe 2029 site:
+    function europeGuest() { return signedIn() && me() in ['your_gmail@gmail.com', 'friend_gmail@gmail.com']; }
+    // Who manages Wayfinder: these people can add others from the app (picture menu → People & access).
+    function admin() { return signedIn() && me() in ['your_gmail@gmail.com']; }
+
+    // People who can create new trips: admins, plus anyone added in the app.
+    // (Invited friends can always see and edit the trips they're on.)
+    function access() { return /databases/$(database)/documents/settings/access; }
+    function tripCreator() { return admin() || (signedIn() && exists(access()) && me() in get(access()).data.creators); }
+    match /settings/access {
+      allow read: if signedIn();
+      allow write: if admin();
+    }
+
+    // ---------------- Europe 2029 site ----------------
+    match /{coll}/{docId} {
+      allow read, write: if europeGuest() && coll in ['planner', 'cities', 'places', 'expenses', 'tasks', 'days', 'deposits', 'photos', 'spots'];
+    }
+    // Personal data (packing lists, theme): only the owner.
+    match /users/{uid}/{rest=**} {
+      allow read, write: if signedIn() && request.auth.uid == uid;
+    }
+
+    // ---------------- Trips app ----------------
+    function isMember(t) { return signedIn() && me() in t.members; }
+    match /trips/{tid} {
+      allow read: if isMember(resource.data);
+      allow create: if tripCreator()
+        && request.resource.data.owner == request.auth.uid
+        && me() in request.resource.data.members;
+      allow update: if isMember(resource.data) && request.resource.data.owner == resource.data.owner && (
+        // ordinary edits: members list unchanged
+        request.resource.data.members == resource.data.members
+        // the planner manages who's on the trip
+        || resource.data.owner == request.auth.uid
+        // anyone can leave
+        || request.resource.data.members == resource.data.members.removeAll([me()])
+      );
+      allow delete: if signedIn() && resource.data.owner == request.auth.uid;
+
+      // Everything inside a trip: any member can read and write.
+      match /{sub=**} {
+        allow read, write: if isMember(get(/databases/$(database)/documents/trips/$(tid)).data);
+      }
+    }
+  }
+}
