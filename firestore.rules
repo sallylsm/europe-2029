@@ -31,6 +31,13 @@ service cloud.firestore {
 
     // ---------------- Trips app ----------------
     function isMember(t) { return signedIn() && me() in t.members; }
+
+    // Family links: anyone with the exact link can view that one page (no listing). Members of the trip keep it up to date.
+    match /shares/{token} {
+      allow get: if true;
+      allow create, update: if signedIn() && isMember(get(/databases/$(database)/documents/trips/$(request.resource.data.tid)).data);
+      allow delete: if signedIn() && isMember(get(/databases/$(database)/documents/trips/$(resource.data.tid)).data);
+    }
     match /trips/{tid} {
       allow read: if isMember(resource.data);
       allow create: if tripCreator()
