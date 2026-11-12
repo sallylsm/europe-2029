@@ -171,6 +171,7 @@ $("#mePop").addEventListener("click", e => {
 });
 $("#fontPick").innerHTML = Object.entries(FONTS).map(([k, f]) => `<button type="button" data-font="${k}" style="font-family:${f.b ? f.b + "," : ""}system-ui,sans-serif"><b style="font-family:${f.d ? f.d + "," : ""}system-ui,sans-serif">Aa</b>${f.label}</button>`).join("");
 $("#loyBtn").addEventListener("click", () => { $("#mePop").hidden = true; loyaltyModal(); });
+$("#profBtn").addEventListener("click", () => { $("#mePop").hidden = true; profileModal(); });
 $("#accessBtn").addEventListener("click", () => { $("#mePop").hidden = true; accessModal(); });
 $("#meBtn").addEventListener("click", e => { e.stopPropagation(); Object.keys(FONTS).forEach(loadFont); const p = $("#mePop"); p.hidden = !p.hidden; $("#meBtn").setAttribute("aria-expanded", String(!p.hidden)); });
 document.addEventListener("click", () => { $("#mePop").hidden = true; $("#meBtn").setAttribute("aria-expanded", "false"); });
@@ -179,9 +180,10 @@ $("#signOut").addEventListener("click", () => signOut(auth));
 
 // ---------------------------------------------------------------- people
 const members = () => (T.trip?.members || []).map(e => e.toLowerCase());
-const nameOf = email => { const n = (T.trip?.names || {})[ekey(email)]; return n || String(email || "").split("@")[0]; };
+const nameOf = email => { if (ME && email === ME.email && ME.name) return ME.name; const n = (T.trip?.names || {})[ekey(email)]; return n || String(email || "").split("@")[0]; };
 const avColor = email => AVCOLS[Math.max(0, members().indexOf(String(email).toLowerCase())) % AVCOLS.length];
-const avatar = email => `<span class="avatar" style="--av:${avColor(email)}" title="${esc(nameOf(email))} (${esc(email)})">${esc(nameOf(email).charAt(0).toUpperCase())}</span>`;
+const avatarSrc = email => (email === ME?.email && ME.photo) || (T.trip?.avatars || {})[ekey(email)] || "";
+const avatar = email => { const src = avatarSrc(email); return `<span class="avatar ${src ? "has-img" : ""}" style="--av:${avColor(email)}" title="${esc(nameOf(email))} (${esc(email)})">${src ? `<img src="${esc(src)}" alt="">` : esc(nameOf(email).charAt(0).toUpperCase())}</span>`; };
 const isOwner = () => T.trip && ME && T.trip.owner === ME.uid;
 
 // ---------------------------------------------------------------- money
@@ -542,9 +544,9 @@ function renderGate(msg) {
 }
 onAuthStateChanged(auth, async user => {
   if (!user) { ME = null; unsubHome?.(); leaveTrip(); renderGate(); return; }
-  ME = { uid: user.uid, email: (user.email || "").toLowerCase(), name: (user.displayName || "").split(" ")[0] || (user.email || "").split("@")[0] };
+  ME = { uid: user.uid, email: (user.email || "").toLowerCase(), name: (user.displayName || "").split(" ")[0] || (user.email || "").split("@")[0], gphoto: user.photoURL || "", gname: user.displayName || "" };
   $("#meBtn").hidden = false; $("#meAv").textContent = ME.name.charAt(0).toUpperCase(); $("#meName").textContent = user.displayName || ME.name; $("#meEmail").textContent = ME.email;
-  subscribeHome(); subscribeLoyalty(); subscribeAccess(); route();
+  subscribeHome(); subscribeLoyalty(); subscribeAccess(); subscribeProfile(); route();
 });
 
 // ================================================================ ROUTING
@@ -612,7 +614,7 @@ function newTripModal() {
       if (validIso(start) && (!validIso(end) || end < start)) end = start;
       const id = uidGen();
       const trip = { name: name.slice(0, 60), dest: dest ? destOf(dest) : null, dests, start: start || "", end: end || "",
-        members: [ME.email], names: { [ekey(ME.email)]: ME.name }, owner: ME.uid, ownerEmail: ME.email, created: Date.now(), currency: "USD", budget: 0, notes: "", cover: "" };
+        members: [ME.email], names: { [ekey(ME.email)]: ME.name }, owner: ME.uid, ownerEmail: ME.email, created: Date.now(), currency: PROFILE.homeCur || "USD", budget: 0, notes: "", cover: "" };
       try { await setDoc(doc(fs, "trips/" + id), trip); }
       catch (e) { $("#ntMsg").textContent = e.code === "permission-denied" ? "Your account can't start trips yet. Ask whoever set up Wayfinder to add you under People & access. You can still join trips you're invited to." : "Couldn't create the trip. Check your connection."; return; }
       closeModal(); location.hash = `#/t/${id}/plan`;
@@ -640,7 +642,8 @@ function openTrip(id, tab) {
   cur.unsubs.push(onSnapshot(doc(fs, "trips/" + id), s => {
     if (!s.exists()) { $("#panel").innerHTML = `<div class="view"><p class="banner">This trip doesn't exist anymore, or you're no longer a member.</p><a href="#/">Back to your trips</a></div>`; return; }
     T.trip = { ...s.data() };
-    if (ME && !(T.trip.names || {})[ekey(ME.email)] && members().includes(ME.email)) updateDoc(doc(fs, "trips/" + id), { ["names." + ekey(ME.email)]: ME.name }).catch(() => {});
+    if (ME && members().includes(ME.email) && PROFILE.updated !== undefined) syncProfileTo(id, T.trip);
+    else if (ME && !(T.trip.names || {})[ekey(ME.email)] && members().includes(ME.email)) updateDoc(doc(fs, "trips/" + id), { ["names." + ekey(ME.email)]: ME.name }).catch(() => {});
     rerender();
   }, e => { $("#panel").innerHTML = `<div class="view"><p class="banner">${e.code === "permission-denied" ? "You're not a member of this trip. Ask the person who planned it to invite your Google email." : "Couldn't load this trip."}</p><a href="#/">Back to your trips</a></div>`; }));
   cur.unsubs.push(onSnapshot(doc(fs, `users/${ME.uid}/packing/${id}`), s => { if (!latest[`users/${ME.uid}/packing/${id}`]) { T.packing = s.exists() ? { ...s.data() } : { empty: true }; rerender(); } }, () => { T.packing = { empty: true }; }));
@@ -1355,7 +1358,7 @@ function bookingModal(id, kind, prefill = {}) {
   const b = id ? T.bookings[id] : { kind, split: members(), ...prefill };
   // flights are edited as legs; an older flight with layovers is split into legs (times in between left blank)
   let legs = b.legs?.length ? b.legs.map(l => ({ ...l })) : (() => {
-    const names = [b.from || "", ...(b.stops || []).map(x => x.at), b.to || ""];
+    const names = [b.from || (!id && PROFILE.homeAirport) || "", ...(b.stops || []).map(x => x.at), b.to || ""];
     return names.slice(0, -1).map((f, i, arr) => ({ from: f, to: names[i + 1], num: i ? "" : b.num || "", seat: i ? "" : b.seats || "",
       depDate: i ? "" : b.depDate || "", depTime: i ? "" : b.depTime || "", arrDate: i === arr.length - 1 ? b.arrDate || "" : "", arrTime: i === arr.length - 1 ? b.arrTime || "" : "" }));
   })();
@@ -2491,6 +2494,78 @@ function accessModal() {
       catch (e) { $("#acMsg").innerHTML = e.code === "permission-denied" ? "Only the app's admin can change this. If that's you, put your email in <code>admin()</code> in the Firebase rules (one time)." : "Couldn't save. Check your connection."; }
     };
     setTimeout(() => $("#acEmail")?.focus(), 30);
+  });
+}
+
+// ================================================================ PROFILE
+let PROFILE = {}, profUnsub = null;
+function subscribeProfile() {
+  profUnsub?.();
+  profUnsub = onSnapshot(doc(fs, `users/${ME.uid}/prefs/profile`), s => { PROFILE = s.exists() ? s.data() : {}; applyProfile(); }, () => {});
+}
+function applyProfile() {
+  if (!ME) return;
+  ME.name = (PROFILE.name || "").trim() || (ME.gname || "").split(" ")[0] || ME.email.split("@")[0];
+  ME.photo = PROFILE.photo === "google" ? ME.gphoto : PROFILE.photo || "";
+  const av = $("#meAv"); av.classList.toggle("has-img", !!ME.photo); av.innerHTML = ME.photo ? `<img src="${esc(ME.photo)}" alt="">` : esc(ME.name.charAt(0).toUpperCase());
+  $("#meName").textContent = PROFILE.name || ME.gname || ME.name;
+  if (cur && T.trip) renderTrip(true); else if (!cur && ME) renderHome?.();
+}
+// your name and photo travel with you onto every trip you're on, so others see them
+async function pushProfileToTrips() {
+  const ek = ekey(ME.email), photo = ME.photo && ME.photo.length < 60000 ? ME.photo : "";
+  await Promise.all(Object.keys(TRIPS).map(id => updateDoc(doc(fs, "trips/" + id), { ["names." + ek]: ME.name, ["avatars." + ek]: photo }).catch(() => {})));
+}
+function syncProfileTo(id, t) {   // when opening a trip, fix anything out of date
+  if (!ME || !t || !(t.members || []).includes(ME.email)) return;
+  const ek = ekey(ME.email), photo = ME.photo && ME.photo.length < 60000 ? ME.photo : "";
+  const patch = {};
+  if ((t.names || {})[ek] !== ME.name) patch["names." + ek] = ME.name;
+  if (((t.avatars || {})[ek] || "") !== photo) patch["avatars." + ek] = photo;
+  if (Object.keys(patch).length) updateDoc(doc(fs, "trips/" + id), patch).catch(() => {});
+}
+function squareThumb(file, size = 160) {
+  return new Promise((res, rej) => {
+    const url = URL.createObjectURL(file), img = new Image();
+    img.onload = () => { URL.revokeObjectURL(url); const s = Math.min(img.naturalWidth, img.naturalHeight), c = document.createElement("canvas"); c.width = c.height = size;
+      c.getContext("2d").drawImage(img, (img.naturalWidth - s) / 2, (img.naturalHeight - s) / 2, s, s, 0, 0, size, size); res(c.toDataURL("image/jpeg", 0.82)); };
+    img.onerror = () => { URL.revokeObjectURL(url); rej(new Error("That file isn't an image this browser can read.")); };
+    img.src = url;
+  });
+}
+function profileModal() {
+  let photo = PROFILE.photo || "";
+  const shown = () => photo === "google" ? ME.gphoto : photo;
+  const paintPhoto = () => { const s = shown(); $("#pfPic").innerHTML = s ? `<img src="${esc(s)}" alt="">` : esc(($("#pfName")?.value || ME.name).charAt(0).toUpperCase());
+    $("#pfPic").style.setProperty("--av", avColor(ME.email)); $("#pfRemove").hidden = !photo; };
+  openModal(`<div class="row between"><h2>Your profile</h2><button class="iconbtn" type="button" data-close aria-label="Close">×</button></div>
+    <div class="pf-top"><span class="avatar pf-pic" id="pfPic"></span><div class="pf-btns">
+      <label class="btn small file-btn">Upload a photo<input type="file" id="pfFile" accept="image/*"></label>
+      ${ME.gphoto ? `<button class="btn ghost small" type="button" id="pfGoogle">Use my Google photo</button>` : ""}
+      <button class="linkbtn" type="button" id="pfRemove">Remove photo</button></div></div>
+    <label class="field" for="pfName">Name<input id="pfName" maxlength="40" value="${esc(PROFILE.name || ME.name)}" placeholder="What friends see on your trips"></label>
+    <div class="field"><span>Email</span><span class="hint">${esc(ME.email)} · signed in with Google</span></div>
+    <div class="grid2">
+      <label class="field" for="pfAir">Home airport<input id="pfAir" maxlength="40" value="${esc(PROFILE.homeAirport || "")}" placeholder="e.g. ITO"><span class="hint" id="pfAirName"></span></label>
+      <label class="field" for="pfCur">Home currency<select id="pfCur">${CURRENCIES.map(c => `<option ${c === (PROFILE.homeCur || "USD") ? "selected" : ""}>${c}</option>`).join("")}</select></label>
+    </div>
+    <p class="hint">Your home airport fills in the first flight of new bookings, and your home currency is the default for new trips. Your name and photo show on every trip you're on.</p>
+    <p class="hint" id="pfMsg" role="status"></p>
+    <div class="row" style="justify-content:flex-end"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn accent" type="button" id="pfSave">Save</button></div>`, m => {
+    $$("[data-close]", m).forEach(x => x.onclick = closeModal); paintPhoto();
+    const airHint = () => { const ap = airportOf($("#pfAir").value); $("#pfAirName").textContent = ap ? `${ap.code} · ${ap.name}` : ""; };
+    loadAirports().then(airHint); $("#pfAir").oninput = airHint;
+    $("#pfName").oninput = paintPhoto;
+    $("#pfFile").onchange = async e => { const f = e.target.files[0]; if (!f) return; try { photo = await squareThumb(f); paintPhoto(); } catch (err) { $("#pfMsg").textContent = err.message; } };
+    $("#pfGoogle") && ($("#pfGoogle").onclick = () => { photo = "google"; paintPhoto(); });
+    $("#pfRemove").onclick = () => { photo = ""; paintPhoto(); };
+    $("#pfSave").onclick = async () => {
+      const ap = airportOf($("#pfAir").value);
+      const p = { name: $("#pfName").value.trim().slice(0, 40), photo, homeAirport: ap ? ap.code : $("#pfAir").value.trim().toUpperCase().slice(0, 40), homeCur: $("#pfCur").value, updated: Date.now() };
+      const btn = $("#pfSave"); btn.disabled = true;
+      try { await setDoc(doc(fs, `users/${ME.uid}/prefs/profile`), p); PROFILE = p; applyProfile(); await pushProfileToTrips(); closeModal(); toast("Profile saved."); }
+      catch (e) { btn.disabled = false; $("#pfMsg").textContent = "Couldn't save. Check your connection."; }
+    };
   });
 }
 
