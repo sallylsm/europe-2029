@@ -2458,10 +2458,17 @@ function payModal() {
 let ACCESS = null, accessUnsub = null;
 function subscribeAccess() {
   accessUnsub?.();
-  accessUnsub = onSnapshot(doc(fs, "settings/access"), s => { ACCESS = s.exists() ? s.data() : { missing: true }; $("#accessBtn").hidden = !canManage(); }, () => { ACCESS = { missing: true }; $("#accessBtn").hidden = false; });
+  accessUnsub = onSnapshot(doc(fs, "settings/access"), s => { ACCESS = s.exists() ? s.data() : { missing: true }; $("#accessBtn").hidden = !canManage(); probeAdmin(); }, () => { ACCESS = { denied: true }; $("#accessBtn").hidden = true; });   // not allowed to read it: not an admin
+}
+// someone who can read the list but isn't marked as an admin yet: the rules decide, so try a harmless write once
+let probed = false;
+async function probeAdmin() {
+  if (probed || !ACCESS || ACCESS.missing || ACCESS.denied || (ACCESS.admins || []).includes(ME.email)) return;
+  probed = true;
+  try { await updateDoc(doc(fs, "settings/access"), { admins: [...new Set([...(ACCESS.admins || []), ME.email])] }); } catch {}   // only an admin's write goes through
 }
 // the rules decide for real; this only decides whether to show the screen
-const canManage = () => !ACCESS || ACCESS.missing || (ACCESS.admins || []).includes(ME.email);
+const canManage = () => !!ACCESS && !ACCESS.denied && (ACCESS.missing || (ACCESS.admins || []).includes(ME.email));
 function accessModal() {
   let list = [...(ACCESS?.creators || [])];
   const paint = () => { $("#acList").innerHTML = list.map((e, i) => `<div class="bal">${avatar(e)}<span class="grow"><b>${esc(nameOf(e) !== e ? nameOf(e) : e)}</b>${nameOf(e) !== e ? ` <span class="hint" style="display:inline">${esc(e)}</span>` : ""}</span><button class="iconbtn del" type="button" data-ar="${i}" aria-label="Remove ${esc(e)}">×</button></div>`).join("") || `<p class="hint">Only you so far.</p>`; };
