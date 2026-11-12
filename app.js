@@ -530,13 +530,20 @@ const closeModal = () => { $("#modalRoot").innerHTML = ""; };
 
 // ================================================================ AUTH
 const provider = new GoogleAuthProvider(); provider.setCustomParameters({ prompt: "select_account" });
+// links opened from Instagram, Messenger, LINE, etc. open in that app's own browser, where Google blocks sign-in
+const inAppBrowser = () => /FBAN|FBAV|Instagram|Line\/|Messenger|MicroMessenger|Snapchat|TikTok|BytedanceWebview|KAKAOTALK|; wv\)|\bGSA\//i.test(navigator.userAgent || "");
 function renderGate(msg) {
   $("#crumb").textContent = ""; $("#meBtn").hidden = true; $("#backBtn").hidden = true; $("#layoutSeg").hidden = true;
   $("#app").innerHTML = `<div class="gate"><div class="card"><h1><span class="brand-logo big" role="img" aria-label="Wayfinder"></span></h1><p class="hint">${esc(msg || "Plan trips together: a map, a day-by-day plan, bookings and a shared budget.")}</p><button class="btn accent" id="signIn" type="button">Sign in with Google</button></div></div>`;
+  if (inAppBrowser()) {
+    $(".gate .card").insertAdjacentHTML("beforeend", `<div class="banner warn-banner"><b>Open this page in Safari or Chrome.</b> Google doesn't allow signing in from inside other apps (like Messenger, Instagram or LINE). Tap ⋯ or the share icon and choose <b>Open in browser</b>, or copy the link:<div class="row" style="gap:6px;margin-top:8px"><input class="input grow" readonly value="${esc(location.href)}" aria-label="Page link"><button class="btn small" type="button" id="gateCopy">Copy</button></div></div>`);
+    $("#gateCopy").onclick = () => navigator.clipboard?.writeText(location.href).then(() => { $("#gateCopy").textContent = "Copied"; });
+  }
   $("#signIn").onclick = async () => {
     try { await signInWithPopup(auth, provider); }
     catch (e) {
       if (e.code === "auth/popup-blocked" || e.code === "auth/operation-not-supported-in-this-environment") return signInWithRedirect(auth, provider);
+      if (e.code === "auth/web-storage-unsupported" || /disallowed_useragent/i.test(e.message || "")) return renderGate("Google sign-in doesn't work in this app's built-in browser. Open the link in Safari or Chrome instead.");
       const why = { "auth/unauthorized-domain": `Add ${location.hostname} under Firebase → Authentication → Settings → Authorized domains.`, "auth/popup-closed-by-user": "The sign-in window was closed. Try again.", "auth/network-request-failed": "You need a connection to sign in." }[e.code];
       renderGate((why || "Sign-in didn't finish.") + ` (${e.code || e.message})`);
     }
@@ -645,7 +652,7 @@ function openTrip(id, tab) {
     if (ME && members().includes(ME.email) && PROFILE.updated !== undefined) syncProfileTo(id, T.trip);
     else if (ME && !(T.trip.names || {})[ekey(ME.email)] && members().includes(ME.email)) updateDoc(doc(fs, "trips/" + id), { ["names." + ekey(ME.email)]: ME.name }).catch(() => {});
     rerender();
-  }, e => { $("#panel").innerHTML = `<div class="view"><p class="banner">${e.code === "permission-denied" ? "You're not a member of this trip. Ask the person who planned it to invite your Google email." : "Couldn't load this trip."}</p><a href="#/">Back to your trips</a></div>`; }));
+  }, e => { $("#panel").innerHTML = `<div class="view"><p class="banner">${e.code === "permission-denied" ? `This trip hasn't been shared with <b>${esc(ME?.email || "")}</b>. Ask the person who planned it to add this exact email under <b>Share</b>, or sign in with the Google account they invited.` : "Couldn't load this trip. Check your connection and try again."}</p>${e.code === "permission-denied" ? `<button class="btn small" type="button" id="switchAcct">Sign in with a different Google account</button> ` : ""}<a href="#/">Back to your trips</a></div>`; $("#switchAcct") && ($("#switchAcct").onclick = () => signOut(auth)); }));
   cur.unsubs.push(onSnapshot(doc(fs, `users/${ME.uid}/packing/${id}`), s => { if (!latest[`users/${ME.uid}/packing/${id}`]) { T.packing = s.exists() ? { ...s.data() } : { empty: true }; rerender(); } }, () => { T.packing = { empty: true }; }));
   for (const name of ["places", "days", "bookings", "expenses", "checklist", "photos", "notes", "polls"]) {
     cur.unsubs.push(onSnapshot(collection(fs, `trips/${id}/${name}`), snap => {
