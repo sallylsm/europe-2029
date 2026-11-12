@@ -631,7 +631,7 @@ function newTripModal() {
 }
 
 // ================================================================ TRIP VIEW
-const TABS = [["today", "Today"], ["overview", "Overview"], ["explore", "Explore"], ["notes", "Notes"], ["places", "Places"], ["plan", "Itinerary"], ["bookings", "Bookings"], ["food", "Restaurants"], ["budget", "Budget"], ["todo", "To-do"], ["packing", "Packing"], ["guide", "Country guide"]];
+const TABS = [["today", "Today"], ["overview", "Overview"], ["explore", "Explore"], ["notes", "Notes"], ["places", "Places"], ["plan", "Itinerary"], ["bookings", "Bookings"], ["food", "Restaurants"], ["budget", "Budget"], ["todo", "To-do"], ["packing", "Packing"], ["guide", "Country guide"], ["parks", "Theme parks"]];
 function leaveTrip() {
   if (!cur) return;
   cur.unsubs.forEach(u => u()); cur = null;
@@ -679,7 +679,7 @@ function renderTrip(fromData = false) {
     <nav class="tabs" aria-label="Trip sections">${TABS.map(([k, l]) => `<a href="#/t/${cur.id}/${k}" ${cur.tab === k ? 'aria-current="page"' : ""}>${l}</a>`).join("")}</nav>
     <div class="view" id="view"></div>`;
   $("#inviteBtn").onclick = inviteModal; $("#calBtn").onclick = calendarModal;
-  ({ plan: viewPlan, places: viewPlaces, bookings: viewBookings, budget: viewBudget, notes: viewNotes, overview: viewOverview, explore: viewExplore, todo: viewTodo, packing: viewPacking, food: viewFood, today: viewToday, guide: viewGuide }[cur.tab] || viewPlan)($("#view"));
+  ({ plan: viewPlan, places: viewPlaces, bookings: viewBookings, budget: viewBudget, notes: viewNotes, overview: viewOverview, explore: viewExplore, todo: viewTodo, packing: viewPacking, food: viewFood, today: viewToday, guide: viewGuide, parks: viewParks }[cur.tab] || viewPlan)($("#view"));
   if (cur.tab === "plan") { loadWeather(); loadHours(); }
   renderSide();
   if (scrollToDay && cur.tab === "plan") { const el = document.getElementById("day-" + scrollToDay); scrollToDay = null; if (el) { el.scrollIntoView({ block: "start", behavior: reduceMotion() ? "auto" : "smooth" }); return; } }
@@ -707,6 +707,7 @@ function renderSide() {
       ${sideOpen.plan ? `<div class="side-sub">${days.map((iso, i) => { const n = dayPlaces(iso).length; return `<button type="button" class="side-day ${mapFocus === iso ? "on" : ""}" data-sday="${iso}" style="--dc:${dayColor(iso, i)}"><i></i><span>${esc(fmtD(iso, { weekday: "short", month: "short", day: "numeric" }))}</span>${n ? `<span class="side-n">${n}</span>` : ""}</button>`; }).join("")}</div>` : ""}</div>
     <div class="side-group">${item("bookings", "Bookings", caret("bookings"), Object.keys(T.bookings).length || "")}
       ${sideOpen.bookings ? `<div class="side-sub">${[["transport", "Flights & trains"], ["lodging", "Hotels & lodging"], ["car", "Rental cars"], ["event", "Reservations & tickets"]].map(([g, l]) => `<button type="button" class="side-day ${tab === "bookings" && BF.kind === g ? "on" : ""}" data-sbk="${g}"><span>${l}</span>${bk(g) ? `<span class="side-n">${bk(g)}</span>` : ""}</button>`).join("")}</div>` : ""}</div>
+    ${parkDays().length ? item("parks", "Theme parks", "", parkDays().reduce((a, d) => a + T.days[d].parks.length, 0)) : ""}
     ${item("food", "Restaurants", "", placeList().filter(p => FOODT.includes(p.type)).length || "")}
     ${item("budget", "Budget")}
     ${item("todo", "To-do", "", todoOpen || "")}
@@ -858,6 +859,7 @@ function dayHtml(iso, i) {
       <span class="meta">${wxChip(iso)}Day ${i + 1}${travelDay ? " · Travel day" : ""}${items.length ? ` · ${items.length} place${items.length === 1 ? "" : "s"}` : ""}${total ? ` · ${total.toFixed(1)} km · about ${fmtMin(mins)}${how}` : ""}</span></div>
       ${focus ? `<span class="pill accent">Only this day on map</span>` : ""}</div>
     <div class="day-body">
+      ${(T.days[iso]?.parks || []).map(p => `<button type="button" class="park-chip" data-openpark="${iso}|${esc(p.pid)}">🎢 <b>${esc(p.name)}</b><span>${(p.items || []).length ? `${(p.items || []).filter(i => i.must).length} must-dos · ${(p.items || []).length} planned` : "Plan this park"}</span></button>`).join("")}
       ${openColor === iso ? `<div class="day-colors" role="group" aria-label="Day color">${DAYPAL.map(([hx, nm]) => `<button type="button" data-setcol="${iso}" data-c="${hx}" style="--sw:${hx}" aria-pressed="${T.days[iso]?.color === hx}" title="${nm}" aria-label="${nm}"></button>`).join("")}<button type="button" class="linkbtn" data-setcol="${iso}" data-c="">Default</button></div>` : ""}
       ${bk.map(x => `<div class="bk-mini">${x.txt}</div>`).join("")}
       <textarea class="day-notes" id="dn-${iso}" data-notes="${iso}" placeholder="Notes for the day…" rows="${Math.min(8, Math.max(1, notes.split("\n").length))}">${esc(notes)}</textarea>
@@ -877,6 +879,7 @@ function dayHtml(iso, i) {
       <div class="day-actions">
         <button class="btn small ${openAdd === iso ? "ghost" : ""}" type="button" data-add="${iso}">${openAdd === iso ? "Done adding" : "+ Add a place"}</button>
         <button class="btn ghost small" type="button" data-addnote="${iso}">+ Note</button>
+        <button class="btn ghost small" type="button" data-parkday="${iso}">🎢 Theme park</button>
         <button class="btn ghost small" type="button" data-ideas="${iso}" aria-expanded="${openIdeas === iso}">${openIdeas === iso ? "Hide ideas" : "Ideas nearby"}</button>
         ${pts.length > 1 ? `<button class="btn ghost small" type="button" data-opt="${iso}" title="Let the planner put the stops in the shortest order">Optimize route</button>` : ""}
         ${pts.length > 1 ? `<button class="btn ghost small" type="button" data-dir="${iso}">Directions</button>` : ""}
@@ -997,6 +1000,8 @@ function wirePlan(v) {
     if (b.dataset.opt) return optimizeAsk(b.dataset.opt);
     if (b.dataset.dir) return directionsModal(b.dataset.dir);
     if (b.dataset.findstay) return staysModal(b.dataset.findstay);
+    if (b.dataset.parkday) return parkPickModal(b.dataset.parkday);
+    if (b.dataset.openpark) { const [a, c] = b.dataset.openpark.split("|"); parkSel = { iso: a, pid: c }; location.hash = `#/t/${cur.id}/parks`; return; }
     if (b.dataset.addnote) {
       const iso = b.dataset.addnote, id = uidGen(), all = dayItems(iso), order = all.length ? Math.max(...all.map(x => x.order ?? 0)) + 1 : 0;
       T.days[iso] = { ...(T.days[iso] || {}), cards: [...dayCards(iso), { id, text: "", time: "", order }] }; saveDay(iso);
@@ -1955,6 +1960,12 @@ const HELP = [
     <li><b>Find stays nearby</b> lists hotels, hostels and B&amp;Bs close to the places on your days, or near where your flight lands, with links to check prices. <i>Add as stay</i> fills in a booking for you.</li></ul>`],
   ["together", "Deciding together", `<p>Tap <b>💬</b> on any place to leave a comment for the group ("too touristy?", "her friend loved it"). On <b>Notes &amp; votes</b>, start a <b>quick vote</b> when you can't decide. Everyone taps an option, you see who picked what, and whoever started it closes the vote.</p>
     <p><b>Duplicate trip</b> (bottom of Overview) copies a trip as a starting point for the next one, with the dates moved.</p>`],
+  ["parks", "Theme parks", `<p>On any itinerary day, tap <b>🎢 Theme park</b> and pick the park (Disneyland, California Adventure, Universal, Tokyo Disney and 70+ more). The <b>Theme parks</b> tab then has:</p>
+    <ul><li><b>Park hours</b> for your date, including early entry and special ticketed events (posted about 1–2 months ahead).</li>
+    <li><b>Your plan</b>: pick rides, shows and food, star your <b>must-dos</b>, note Lightning Lane plans and return times, and drag to reorder. <b>Suggested order</b> puts must-dos first for when the gates open, then goes the shortest way around. The map shows the route.</li>
+    <li><b>Who's riding</b>: add everyone's height, and rides with a minimum height flag anyone too short.</li>
+    <li><b>Live wait times</b> on the day, shortest first, refreshing every 5 minutes, with single rider, Lightning Lane return times and showtimes. Today shows them too, and rides you check off go into the memory book.</li></ul>
+    <p>Park data comes from ThemeParks.wiki. Book Lightning Lanes in the official park app.</p>`],
   ["food", "Restaurants", `<p>The Restaurants tab gathers the places to eat and drink you've saved, plus your restaurant reservations. <b>Find places to eat</b> searches around the places on your days, by restaurants, cafés or bars, and <i>Save</i> adds one to your list.</p>`],
   ["gmail", "Import from Gmail", `<p>In <b>Bookings → Import from Gmail</b>, Wayfinder asks Google for read-only access, finds confirmation emails, and shows the flights, stays, cars, trains and reservations it can read. You pick which to add. Connecting flights on one booking become one flight with layovers. Emails are read in your browser and nothing else is kept.</p>
     <p>It works with emails that carry booking details for Gmail (most airlines, hotel chains, booking sites and rental companies). For the rest, it lists the email so you can add it by hand.</p>
@@ -1997,6 +2008,7 @@ const WXI = c => c == null ? "🌤️" : c === 0 ? "☀️" : c <= 2 ? "🌤️"
 const WXT = c => c == null ? "" : c === 0 ? "Clear" : c <= 2 ? "Partly cloudy" : c === 3 ? "Cloudy" : c <= 48 ? "Fog" : c <= 57 ? "Drizzle" : c <= 67 ? "Rain" : c <= 77 ? "Snow" : c <= 82 ? "Showers" : c <= 86 ? "Snow showers" : "Thunderstorms";
 // where the day happens: its places, else your stay, else where your flight lands, else the trip's destination
 function dayPoint(iso) {
+  const pk = (T.days[iso]?.parks || []).find(p => p.lat != null); if (pk && !dayPlaces(iso).some(hasPt)) return { lat: pk.lat, lon: pk.lon };
   const pts = dayPlaces(iso).filter(hasPt);
   if (pts.length) return { lat: pts.reduce((a, p) => a + p.lat, 0) / pts.length, lon: pts.reduce((a, p) => a + p.lon, 0) / pts.length };
   const st = stayFor(iso); if (st && st[1].lat != null) return { lat: st[1].lat, lon: st[1].lon };
@@ -2122,6 +2134,7 @@ function viewToday(v) {
       <button class="iconbtn" type="button" data-tday="${days[i + 1] || ""}" ${i < days.length - 1 ? "" : "disabled"} aria-label="Next day">›</button></div>
     ${wxChip(iso, true)}
     ${bk.length || stay ? `<div class="card"><h3>Bookings</h3><div class="today-bk">${bk.map(x => `<button type="button" class="bk-mini" data-bedit="${x.id}">${x.txt}</button>`).join("")}${stay && !bk.some(x => x.id === stay[0]) ? `<button type="button" class="bk-mini" data-bedit="${stay[0]}"><b>Staying at</b> ${esc(stay[1].title || "your stay")}${stay[1].addr ? " · " + esc(stay[1].addr) : ""}</button>` : ""}</div></div>` : ""}
+    ${todayParksHtml(iso)}
     ${nextHtml}
     <div class="card"><div class="row between"><h3>The plan</h3><a class="linkbtn" href="#/t/${cur.id}/plan" data-goday="${iso}">Edit in Itinerary</a></div>
       ${items.length ? `<ol class="today-list">${items.map(x => x.k === "n" ? (x.text ? `<li class="tl-note">${x.time ? `<b>${esc(x.time)}</b> ` : ""}${esc(x.text).replace(/\n/g, "<br>")}</li>` : "") : `<li class="${x.visited ? "done" : ""} ${x === next ? "is-next" : ""}"><label><input type="checkbox" data-visit="${x.id}" ${x.visited ? "checked" : ""} aria-label="Visited ${esc(x.name)}"><span class="tl-time">${esc(x.time || "")}</span><span class="grow"><b>${esc(x.name)}</b>${hoursBadge(x, iso)}</span></label></li>`).join("")}</ol>` : `<p class="hint">Nothing planned for this day yet.</p>`}
@@ -2132,7 +2145,9 @@ function viewToday(v) {
     const vb = e.target.closest("button[data-visit]"); if (vb) { const id = vb.dataset.visit; T.places[id] = { ...T.places[id], visited: true }; savePlace(id); renderTrip(); return; }
     const be = e.target.closest("[data-bedit]"); if (be) return bookingModal(be.dataset.bedit);
     const g = e.target.closest("[data-goday]"); if (g) { mapFocus = g.dataset.goday; scrollToDay = g.dataset.goday; fitPending = true; }
+    const gp = e.target.closest("[data-gopark]"); if (gp) { const [a, c] = gp.dataset.gopark.split("|"); parkSel = { iso: a, pid: c }; }
   };
+  fillTodayParks(iso);
   v.onchange = e => { const id = e.target.dataset?.visit; if (id && e.target.type === "checkbox") { T.places[id] = { ...T.places[id], visited: e.target.checked }; savePlace(id); renderTrip(); } };
   v.oninput = e => { const iso2 = e.target.dataset?.journal; if (iso2) { T.days[iso2] = { ...(T.days[iso2] || {}), journal: e.target.value.slice(0, 4000) }; saveDay(iso2, 800); } };
   loadWeather(); loadHours();
@@ -2426,12 +2441,13 @@ function memoryHtml() {
     const ps = dayPlaces(iso), went = ps.some(p => p.visited) ? ps.filter(p => p.visited) : ps;
     const pts = went.filter(hasPt); for (let k = 1; k < pts.length; k++) kmTot += km(pts[k - 1], pts[k]); nPlaces += went.length;
     const photos = Object.values(T.photos).filter(p => p.day === iso), j = T.days[iso]?.journal || "", notes = [T.days[iso]?.notes, ...dayCards(iso).map(c => c.text)].filter(Boolean);
-    if (!went.length && !photos.length && !j && !notes.length) return;
+    if (!went.length && !photos.length && !j && !notes.length && !(T.days[iso]?.parks || []).some(p => (p.items || []).some(i => i.done))) return;
     const col = colVal(dayColor(iso, i));
     body += `<article class="mb-day"><header><span class="mb-n" style="background:${col}">${i + 1}</span><div><h2>${esc(fmtD(iso, { weekday: "long", month: "long", day: "numeric" }))}</h2><span>${esc([...new Set(went.map(p => p.city).filter(Boolean))].join(" · "))}</span></div></header>
       ${photos.length ? `<div class="mb-photos n${Math.min(photos.length, 4)}">${photos.slice(0, 4).map(p => `<img src="${esc(p.data)}" alt="">`).join("")}</div>` : ""}
       ${j ? `<blockquote class="mb-journal">${esc(j).replace(/\n/g, "<br>")}</blockquote>` : ""}
       ${went.length ? `<ul class="mb-places">${went.map(p => `<li>${photoSrcOf(p) ? `<img src="${esc(photoSrcOf(p))}" alt="">` : `<span class="mb-ph">${esc(p.name.charAt(0))}</span>`}<span><b>${esc(p.name)}</b>${p.notes ? `<br><i>${esc(p.notes)}</i>` : ""}</span></li>`).join("")}</ul>` : ""}
+      ${(T.days[iso]?.parks || []).map(p => { const d = (p.items || []).filter(i => i.done); return d.length ? `<p class="mb-rides">🎢 <b>${esc(p.name)}</b>: ${d.map(i => esc(i.name)).join(" · ")}</p>` : ""; }).join("")}
       ${notes.length ? `<p class="mb-notes">${notes.map(n => esc(n)).join("<br>")}</p>` : ""}</article>`;
   });
   return `<section class="mb-cover">${t.cover ? `<img src="${esc(t.cover)}" alt="">` : ""}<div><h1>${esc(t.name || "Our trip")}</h1><p>${esc(range)}</p><p>${members().map(e => esc(nameOf(e))).join(" & ")}</p></div></section>
@@ -2574,6 +2590,235 @@ function profileModal() {
       catch (e) { btn.disabled = false; $("#pfMsg").textContent = "Couldn't save. Check your connection."; }
     };
   });
+}
+
+// ================================================================ THEME PARKS (ThemeParks.wiki: free, no key)
+const TPW = "https://api.themeparks.wiki/v1";
+const tpCache = (k, ttl, fn) => {   // localStorage cache for park lists and ride catalogs
+  try { const c = JSON.parse(localStorage.getItem("tp:" + k) || "null"); if (c && Date.now() - c.at < ttl) return Promise.resolve(c.v); } catch {}
+  return fn().then(v => { try { localStorage.setItem("tp:" + k, JSON.stringify({ at: Date.now(), v })); } catch {} return v; });
+};
+const tpGet = path => fetch(TPW + path).then(r => { if (!r.ok) throw new Error("tp " + r.status); return r.json(); });
+const tpDestinations = () => tpCache("dest", 7 * 864e5, () => tpGet("/destinations").then(j => (j.destinations || []).map(d => ({ id: d.id, name: d.name, parks: (d.parks || []).map(p => ({ id: p.id, name: p.name })) }))));
+// everything inside a park we'd plan around: rides, shows, places to eat
+const tpCatalog = pid => tpCache("cat:" + pid, 3 * 864e5, () => tpGet(`/entity/${pid}/children`).then(j => (j.children || [])
+  .filter(c => ["ATTRACTION", "SHOW", "RESTAURANT"].includes(c.entityType))
+  .map(c => ({ id: c.id, name: c.name, t: c.entityType, lat: c.location?.latitude ?? null, lon: c.location?.longitude ?? null }))
+  .sort((a, b) => a.name.localeCompare(b.name))));
+const tpSchedule = (pid, iso) => tpCache(`sch:${pid}:${iso.slice(0, 7)}`, 6 * 36e5, () => tpGet(`/entity/${pid}/schedule/${iso.slice(0, 4)}/${iso.slice(5, 7)}`).then(j => j.schedule || []));
+const TPLIVE = {};   // pid -> { at, data: {id: live} }
+async function tpLive(pid, force) {
+  const c = TPLIVE[pid]; if (!force && c && Date.now() - c.at < 4 * 60e3) return c.data;
+  const j = await tpGet(`/entity/${pid}/live`), data = {};
+  (j.liveData || []).forEach(x => data[x.id] = x);
+  TPLIVE[pid] = { at: Date.now(), data }; return data;
+}
+const TPT = { ATTRACTION: ["🎢", "Ride"], SHOW: ["🎭", "Show"], RESTAURANT: ["🍽️", "Dining"] };
+const LLOPT = [["", "Standby"], ["multi", "Lightning Lane Multi Pass"], ["single", "Lightning Lane Single Pass"], ["vq", "Virtual queue"], ["single-rider", "Single rider"]];
+const parkDays = () => tripDays().filter(iso => (T.days[iso]?.parks || []).length);
+const hhmm = t => String(t || "").slice(11, 16);   // park-local time from "2027-03-10T08:00:00-07:00"
+const fmt12 = t => { if (!/^\d\d:\d\d/.test(t || "")) return t || ""; let [h, m] = t.split(":").map(Number); const ap = h >= 12 ? "pm" : "am"; h = h % 12 || 12; return `${h}${m ? ":" + String(m).padStart(2, "0") : ""}${ap}`; };
+const heightUnit = () => useF() ? "in" : "cm";
+const showH = inches => !inches ? "" : useF() ? `${Math.round(inches)}″` : `${Math.round(inches * 2.54)} cm`;
+const toInches = v => { const n = parseFloat(v); return !n ? 0 : useF() ? n : n / 2.54; };
+function savePark(iso) { saveDay(iso, 400); }
+function parkOf(iso, pid) { return (T.days[iso]?.parks || []).find(p => p.pid === pid); }
+function updPark(iso, pid, fn) { T.days[iso] = { ...T.days[iso], parks: (T.days[iso]?.parks || []).map(p => p.pid === pid ? fn({ ...p, items: [...(p.items || [])] }) : p) }; savePark(iso); }
+
+// ---- add a park to a day
+function parkPickModal(iso) {
+  openModal(`<div class="row between"><h2>Theme park day</h2><button class="iconbtn" type="button" data-close aria-label="Close">×</button></div>
+    <p class="hint">${esc(dayLabel(iso))}. Pick the park you'll be at. Doing a park hopper? Add more than one.</p>
+    <input class="input" id="tpQ" placeholder="Search: Disneyland, Universal, Tokyo Disney…" autocomplete="off" aria-label="Search parks">
+    <div id="tpList" class="tp-list"><p class="hint">Loading parks…</p></div>
+    <p class="hint">Park data from <a class="ext" href="https://themeparks.wiki" target="_blank" rel="noopener">ThemeParks.wiki ↗</a></p>`, async m => {
+    $$("[data-close]", m).forEach(x => x.onclick = closeModal);
+    let dests = [];
+    try { dests = await tpDestinations(); } catch { $("#tpList").innerHTML = `<p class="hint">Couldn't reach the theme park data service. Check your connection and try again.</p>`; return; }
+    const have = new Set((T.days[iso]?.parks || []).map(p => p.pid));
+    const paint = () => {
+      const q = $("#tpQ").value.trim().toLowerCase();
+      const L2 = dests.map(d => ({ ...d, parks: d.parks.filter(p => !q || (p.name + " " + d.name).toLowerCase().includes(q)) })).filter(d => d.parks.length).slice(0, 30);
+      $("#tpList").innerHTML = L2.map(d => `<div class="tp-dest"><b>${esc(d.name)}</b>${d.parks.map(p => `<button type="button" class="tp-park ${have.has(p.id) ? "on" : ""}" data-pid="${esc(p.id)}" data-pn="${esc(p.name)}" data-dn="${esc(d.name)}">${have.has(p.id) ? "✓ " : "🎢 "}${esc(p.name)}</button>`).join("")}</div>`).join("") || `<p class="hint">No parks match.</p>`;
+    };
+    paint(); $("#tpQ").oninput = paint; $("#tpQ").focus();
+    $("#tpList").onclick = async e => {
+      const b = e.target.closest("[data-pid]"); if (!b || have.has(b.dataset.pid)) return;
+      b.disabled = true; b.textContent = "Adding…";
+      let lat = null, lon = null;
+      try { const cat = await tpCatalog(b.dataset.pid), pts = cat.filter(c => c.lat != null); if (pts.length) { lat = pts.reduce((a, c) => a + c.lat, 0) / pts.length; lon = pts.reduce((a, c) => a + c.lon, 0) / pts.length; } } catch {}
+      T.days[iso] = { ...(T.days[iso] || {}), parks: [...(T.days[iso]?.parks || []), { pid: b.dataset.pid, name: b.dataset.pn, dest: b.dataset.dn, lat, lon, items: [] }] };
+      saveDay(iso, 0); closeModal(); location.hash = `#/t/${cur.id}/parks`; parkSel = { iso, pid: b.dataset.pid };
+    };
+  });
+}
+
+// ---- pick rides, shows and food
+function parkItemsModal(iso, pid) {
+  const pk = parkOf(iso, pid); let filt = "ATTRACTION";
+  openModal(`<div class="row between"><h2>${esc(pk.name)}</h2><button class="iconbtn" type="button" data-close aria-label="Close">×</button></div>
+    <div class="row" style="gap:8px;flex-wrap:wrap"><input class="input grow" id="tiQ" placeholder="Search rides, shows, restaurants" autocomplete="off" aria-label="Search">
+      <div class="seg" role="group" aria-label="Type">${Object.entries(TPT).map(([k, [ic, l]]) => `<button type="button" data-tf="${k}" aria-pressed="${k === filt}">${ic} ${l}s</button>`).join("")}</div></div>
+    <div id="tiList" class="ti-list"><p class="hint">Loading…</p></div>
+    <div class="row" style="justify-content:space-between"><span class="hint" id="tiN"></span><button class="btn accent" type="button" data-close>Done</button></div>`, async m => {
+    $$("[data-close]", m).forEach(x => x.onclick = () => { closeModal(); renderTrip(); });
+    let cat = [];
+    try { cat = await tpCatalog(pid); } catch { $("#tiList").innerHTML = `<p class="hint">Couldn't load this park's list. Check your connection.</p>`; return; }
+    const sel = () => new Set((parkOf(iso, pid)?.items || []).map(i => i.eid));
+    const paint = () => {
+      const q = $("#tiQ").value.trim().toLowerCase(), S = sel();
+      const L2 = cat.filter(c => c.t === filt && (!q || c.name.toLowerCase().includes(q)));
+      $("#tiList").innerHTML = L2.map(c => `<label class="ti-row"><input type="checkbox" data-eid="${esc(c.id)}" ${S.has(c.id) ? "checked" : ""}><span>${esc(c.name)}</span></label>`).join("") || `<p class="hint">Nothing here.</p>`;
+      $("#tiN").textContent = `${S.size} picked`;
+    };
+    paint(); $("#tiQ").oninput = paint;
+    m.querySelector(".seg").onclick = e => { const b = e.target.closest("[data-tf]"); if (!b) return; filt = b.dataset.tf; $$("[data-tf]", m).forEach(x => x.setAttribute("aria-pressed", x === b)); paint(); };
+    $("#tiList").onchange = e => {
+      const id = e.target.dataset.eid; if (!id) return; const c = cat.find(x => x.id === id);
+      updPark(iso, pid, p => { if (e.target.checked) p.items.push({ eid: c.id, name: c.name, t: c.t, lat: c.lat, lon: c.lon, must: false, ll: "", llTime: "", minH: 0, done: false, notes: "" }); else p.items = p.items.filter(i => i.eid !== id); return p; });
+      $("#tiN").textContent = `${sel().size} picked`;
+    };
+  });
+}
+
+// suggested order: must-dos first (rope drop), then the rest, each group walking the shortest way
+function suggestOrder(items) {
+  const walk = (list, start) => { const out = [], left = list.slice(); let at = start;
+    while (left.length) { left.sort((a, b) => (at && a.lat != null && b.lat != null ? km(at, a) - km(at, b) : 0)); const n = left.shift(); out.push(n); if (n.lat != null) at = n; }
+    return out; };
+  const must = items.filter(i => i.must && !i.done), rest = items.filter(i => !i.must && !i.done), done = items.filter(i => i.done);
+  const a = walk(must, null), b = walk(rest, [...a].reverse().find(i => i.lat != null) || null);
+  return [...a, ...b, ...done];
+}
+
+// ---- the Theme parks tab
+let parkSel = null, parkTimer = 0;
+function viewParks(v) {
+  const days = parkDays();
+  clearInterval(parkTimer);
+  if (!days.length) { v.innerHTML = `<div class="row between"><h2>Theme parks</h2></div><div class="empty">On an itinerary day, tap <b>🎢 Theme park</b> to plan a park day: hours, a must-do list, a smart ride order and live wait times.</div>`; return; }
+  const all = days.flatMap(iso => T.days[iso].parks.map(p => ({ iso, p })));
+  if (!parkSel || !parkOf(parkSel.iso, parkSel.pid)) { const t = isoOf(new Date()); parkSel = (all.find(x => x.iso === t) || all[0]); parkSel = { iso: parkSel.iso, pid: parkSel.p.pid }; }
+  const { iso, pid } = parkSel, pk = parkOf(iso, pid), items = pk.items || [], party = T.trip.party || [];
+  const isToday = iso === isoOf(new Date());
+  v.innerHTML = `<div class="row between"><h2>Theme parks</h2><button class="btn ghost small" type="button" data-addpark="${iso}">+ Add a park</button></div>
+    <div class="chips tp-days">${all.map(x => `<button type="button" class="chip ${x.iso === iso && x.p.pid === pid ? "on" : ""}" data-psel="${x.iso}|${esc(x.p.pid)}">${esc(fmtD(x.iso, { weekday: "short", month: "short", day: "numeric" }))} · ${esc(x.p.name)}</button>`).join("")}</div>
+    <div class="card tp-head"><div class="row between"><div><h2>${esc(pk.name)}</h2><span class="hint">${esc(pk.dest || "")} · ${esc(dayLabel(iso))}</span></div><button class="iconbtn del" type="button" data-rmpark aria-label="Remove this park from the day">×</button></div>
+      <div id="tpHours" class="tp-hours"><span class="hint">Loading park hours…</span></div></div>
+    <div class="card"><div class="row between"><h3>Who's riding</h3><button class="linkbtn" type="button" id="partyEdit">${party.length ? "Edit" : "Add heights"}</button></div>
+      ${party.length ? `<div class="party">${party.map(x => `<span class="pill">${esc(x.name)}${x.h ? " · " + showH(x.h) : ""}</span>`).join("")}</div>` : `<p class="hint">Add everyone's height and rides with a minimum height will flag anyone too short.</p>`}</div>
+    <div class="card"><div class="row between"><h3>Plan <span class="hint" style="display:inline">${items.filter(i => i.done).length}/${items.length} done</span></h3>
+      <span class="row" style="gap:6px"><button class="btn ghost small" type="button" id="tpOrder" ${items.length > 1 ? "" : "disabled"}>Suggested order</button><button class="btn small" type="button" id="tpAdd">+ Rides, shows & food</button></span></div>
+      ${items.length ? `<ol class="tp-items" id="tpItems">${items.map((it, k) => tpItemHtml(it, k, party)).join("")}</ol>
+        <p class="hint">⭐ marks a must-do. <b>Suggested order</b> puts must-dos first for when the gates open, then goes the shortest way around. Drag to change it.</p>`
+      : `<p class="hint">Pick the rides, shows and places to eat you're thinking about, then star your must-dos.</p>`}</div>
+    <div class="card"><div class="row between"><h3>${isToday ? "Live wait times" : "Wait times right now"}</h3><button class="linkbtn" type="button" id="tpRefresh">Refresh</button></div>
+      ${isToday ? "" : `<p class="hint">These are today's live waits at ${esc(pk.name)}, handy for getting a feel for it. On your park day, they're your real waits.</p>`}
+      <div id="tpLive"><span class="hint">Loading…</span></div></div>
+    <p class="hint">Park data from <a class="ext" href="https://themeparks.wiki" target="_blank" rel="noopener">ThemeParks.wiki ↗</a> · book Lightning Lanes in the official park app.</p>`;
+  // hours
+  tpSchedule(pid, iso).then(sch => {
+    const el = $("#tpHours"); if (!el || parkSel?.iso !== iso) return;
+    const day = sch.filter(x => x.date === iso);
+    if (!day.length) { el.innerHTML = `<span class="hint">Hours aren't posted yet. Parks usually publish them 1–2 months ahead.</span>`; return; }
+    const lab = { OPERATING: "Park hours", EXTRA_HOURS: "Early entry / extra hours", TICKETED_EVENT: "Special ticketed event", PRIVATE_EVENT: "Private event", INFO: "Note" };
+    el.innerHTML = day.sort((a, b) => (a.type === "OPERATING" ? -1 : 0) - (b.type === "OPERATING" ? -1 : 0)).map(x => `<div class="tp-hr ${x.type === "OPERATING" ? "main" : ""}"><span>${lab[x.type] || x.type}${x.description ? ` · ${esc(x.description)}` : ""}</span><b>${fmt12(hhmm(x.openingTime))} – ${fmt12(hhmm(x.closingTime))}</b></div>`).join("")
+      + ((day.find(x => x.purchases?.length)?.purchases || []).filter(p => p.price?.amount).slice(0, 4).map(p => `<div class="tp-hr"><span>${esc(p.name || "")}</span><span>${esc(p.price.formatted || fmtCur(p.price.amount / 100, p.price.currency))}</span></div>`).join(""));
+  }).catch(() => { const el = $("#tpHours"); if (el) el.innerHTML = `<span class="hint">Couldn't load park hours.</span>`; });
+  // live
+  const paintLive = async force => {
+    const el = $("#tpLive"); if (!el) return;
+    let data; try { data = await tpLive(pid, force); } catch { el.innerHTML = `<span class="hint">Couldn't reach live wait times right now.</span>`; return; }
+    if (parkSel?.pid !== pid || !$("#tpLive")) return;
+    const mine = items.length ? items.filter(i => !i.done) : [];
+    const rows = (mine.length ? mine.map(i => ({ i, l: data[i.eid] })) : Object.values(data).filter(l => l.entityType === "ATTRACTION").map(l => ({ i: { name: l.name, eid: l.id, t: "ATTRACTION" }, l })))
+      .filter(r => r.i.t !== "RESTAURANT" || r.l?.queue);
+    const wait = r => (r.i.t || r.l?.entityType) === "SHOW" ? 500 : r.l?.status === "OPERATING" ? (r.l.queue?.STANDBY?.waitTime ?? 0) : 999;
+    rows.sort((a, b) => wait(a) - wait(b));
+    const open = Object.values(data).some(l => l.status === "OPERATING");
+    el.innerHTML = (!open ? `<p class="hint">${esc(pk.name)} is closed right now.</p>` : "") + `<div class="tp-live">${rows.slice(0, mine.length ? 60 : 25).map(r => liveRow(r.i, r.l)).join("")}</div>
+      <p class="hint">Updated ${new Date(TPLIVE[pid].at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}${mine.length ? "" : " · showing the whole park; pick rides above to focus on yours"}</p>`;
+  };
+  paintLive(); if (isToday) parkTimer = setInterval(() => { if (cur?.tab === "parks" && !document.hidden) paintLive(true); else clearInterval(parkTimer); }, 5 * 60e3);
+  // drag to reorder
+  if (window.Sortable && $("#tpItems")) Sortable.create($("#tpItems"), { handle: ".grip", animation: 160, forceFallback: true, ghostClass: "sort-ghost",
+    onStart: () => { dragging = true; }, onEnd: () => { dragging = false; const ids = $$("#tpItems > li").map(li => li.dataset.eid); updPark(iso, pid, p => { p.items = ids.map(id => p.items.find(i => i.eid === id)).filter(Boolean); return p; }); renderTrip(); } });
+  v.onclick = e => {
+    const t = e.target;
+    const ps = t.closest("[data-psel]"); if (ps) { const [a, b] = ps.dataset.psel.split("|"); parkSel = { iso: a, pid: b }; fitPending = true; renderTrip(); renderMap(); return; }
+    if (t.closest("[data-addpark]")) return parkPickModal(iso);
+    if (t.closest("#tpAdd")) return parkItemsModal(iso, pid);
+    if (t.closest("#tpRefresh")) return paintLive(true);
+    if (t.closest("#partyEdit")) return partyModal();
+    if (t.closest("#tpOrder")) { updPark(iso, pid, p => { p.items = suggestOrder(p.items); return p; }); renderTrip(); renderMap(); toast("Ordered: must-dos first, then the shortest walk."); return; }
+    if (t.closest("[data-rmpark]")) { if (!confirmTap(t.closest("[data-rmpark]"))) return; T.days[iso] = { ...T.days[iso], parks: T.days[iso].parks.filter(p => p.pid !== pid) }; saveDay(iso, 0); parkSel = null; renderTrip(); return; }
+    const li = t.closest("[data-eid]"); if (!li) return; const eid = li.dataset.eid;
+    if (t.closest("[data-must]")) { updPark(iso, pid, p => { p.items = p.items.map(i => i.eid === eid ? { ...i, must: !i.must } : i); return p; }); renderTrip(); return; }
+    if (t.closest("[data-tirm]")) { updPark(iso, pid, p => { p.items = p.items.filter(i => i.eid !== eid); return p; }); renderTrip(); renderMap(); return; }
+    if (t.closest("[data-more]")) { li.classList.toggle("open"); return; }
+  };
+  v.onchange = e => {
+    const li = e.target.closest("[data-eid]"); if (!li) return; const eid = li.dataset.eid, f = e.target.dataset.f; if (!f) return;
+    const val = f === "done" ? e.target.checked : f === "minH" ? toInches(e.target.value) : e.target.value;
+    updPark(iso, pid, p => { p.items = p.items.map(i => i.eid === eid ? { ...i, [f]: val } : i); return p; });
+    if (f === "done" || f === "minH" || f === "ll") renderTrip();
+  };
+  v.oninput = e => { const li = e.target.closest("[data-eid]"); if (li && e.target.dataset.f === "notes") updPark(iso, pid, p => { p.items = p.items.map(i => i.eid === li.dataset.eid ? { ...i, notes: e.target.value.slice(0, 300) } : i); return p; }); };
+}
+function tpItemHtml(it, k, party) {
+  const short = it.minH ? party.filter(x => x.h && x.h < it.minH) : [];
+  return `<li class="tp-item ${it.done ? "done" : ""} ${it.must ? "must" : ""}" data-eid="${esc(it.eid)}">
+    <div class="tp-row"><span class="grip" aria-hidden="true">⋮⋮</span><input type="checkbox" data-f="done" ${it.done ? "checked" : ""} aria-label="Done: ${esc(it.name)}">
+      <span class="tp-n">${k + 1}</span><span class="grow"><b>${TPT[it.t]?.[0] || ""} ${esc(it.name)}</b>
+        <span class="tp-tags">${it.ll ? `<span class="pill ll">${esc(LLOPT.find(o => o[0] === it.ll)?.[1] || "")}${it.llTime ? " · " + fmt12(it.llTime) : ""}</span>` : ""}${it.minH ? `<span class="pill">${showH(it.minH)} min</span>` : ""}${short.length ? `<span class="pill warn">⚠ Too short: ${short.map(x => esc(x.name)).join(", ")}</span>` : ""}${it.notes ? `<span class="hint">${esc(it.notes)}</span>` : ""}</span></span>
+      <button class="iconbtn star ${it.must ? "on" : ""}" type="button" data-must aria-pressed="${!!it.must}" aria-label="Must-do">${it.must ? "★" : "☆"}</button>
+      <button class="iconbtn" type="button" data-more aria-label="Details for ${esc(it.name)}">⋯</button>
+      <button class="iconbtn del" type="button" data-tirm aria-label="Remove ${esc(it.name)}">×</button></div>
+    <div class="tp-more">${it.t === "ATTRACTION" ? `<label class="field">How you'll ride<select data-f="ll">${LLOPT.map(([v2, l]) => `<option value="${v2}" ${it.ll === v2 ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+      <label class="field">Return time<input type="time" data-f="llTime" value="${esc(it.llTime || "")}"></label>
+      <label class="field">Min height (${heightUnit()})<input type="number" min="0" step="1" data-f="minH" value="${it.minH ? Math.round(useF() ? it.minH : it.minH * 2.54) : ""}" placeholder="${useF() ? "40" : "102"}"></label>` : ""}
+      <label class="field" style="grid-column:1/-1">Notes<input data-f="notes" maxlength="300" value="${esc(it.notes || "")}" placeholder="${it.t === "SHOW" ? "Showtime, where to stand…" : it.t === "RESTAURANT" ? "Reservation time, what to order…" : "Ride photo, best seat…"}"></label></div></li>`;
+}
+function liveRow(it, l) {
+  if (!l) return `<div class="tl-row"><span>${esc(it.name)}</span><span class="hint">No live data</span></div>`;
+  const st = l.status || "", q = l.queue || {}, w = q.STANDBY?.waitTime;
+  const badge = st === "OPERATING" ? (w != null ? `<b class="wt ${w >= 60 ? "hi" : w >= 30 ? "mid" : "lo"}">${w} min</b>` : `<b class="wt lo">Open</b>`) : st === "DOWN" ? `<b class="wt down">Down</b>` : st === "REFURBISHMENT" ? `<b class="wt down">Refurb</b>` : `<b class="wt closed">Closed</b>`;
+  const extra = [q.SINGLE_RIDER?.waitTime != null && `Single rider ${q.SINGLE_RIDER.waitTime}m`, q.RETURN_TIME?.returnStart && `LL return ${fmt12(hhmm(q.RETURN_TIME.returnStart))}`,
+    q.PAID_RETURN_TIME?.returnStart && `Paid LL ${fmt12(hhmm(q.PAID_RETURN_TIME.returnStart))}${q.PAID_RETURN_TIME.price?.formatted ? " · " + q.PAID_RETURN_TIME.price.formatted : ""}`,
+    q.BOARDING_GROUP && `Virtual queue: ${String(q.BOARDING_GROUP.allocationStatus || "").toLowerCase()}`].filter(Boolean);
+  const now = Date.now(), shows = (l.showtimes || []).filter(x => x.startTime && new Date(x.startTime) > now - 15 * 60e3).slice(0, 4).map(x => fmt12(hhmm(x.startTime)));
+  return `<div class="tl-row ${it.done ? "done" : ""}"><span><b>${TPT[it.t || l.entityType]?.[0] || ""} ${esc(it.name || l.name)}</b>${extra.length ? `<span class="hint">${esc(extra.join(" · "))}</span>` : ""}${shows.length ? `<span class="hint">Next shows: ${esc(shows.join(", "))}</span>` : ""}</span>${l.entityType === "SHOW" && !w ? (shows.length ? `<b class="wt lo">${esc(shows[0])}</b>` : badge) : badge}</div>`;
+}
+function partyModal() {
+  let party = (T.trip.party || []).map(x => ({ ...x }));
+  if (!party.length) party = members().map(e => ({ name: nameOf(e), h: 0 }));
+  const paint = () => { $("#ptList").innerHTML = party.map((x, i) => `<div class="row" style="gap:6px"><input class="input grow" data-pi="${i}" data-pf="name" value="${esc(x.name)}" placeholder="Name" maxlength="30" aria-label="Name">
+    <input class="input" style="width:110px" type="number" min="0" data-pi="${i}" data-pf="h" value="${x.h ? Math.round(useF() ? x.h : x.h * 2.54) : ""}" placeholder="${heightUnit()}" aria-label="Height in ${heightUnit()}"><button class="iconbtn del" type="button" data-pr="${i}" aria-label="Remove">×</button></div>`).join(""); };
+  openModal(`<div class="row between"><h2>Who's riding</h2><button class="iconbtn" type="button" data-close aria-label="Close">×</button></div>
+    <p class="hint">Heights in ${useF() ? "inches" : "centimeters"}. Kids and anyone not on the trip list can go here too. Rides with a minimum height flag anyone who's too short.</p>
+    <div id="ptList" style="display:grid;gap:6px"></div><button class="linkbtn" type="button" id="ptAdd" style="justify-self:start">+ Add someone</button>
+    <div class="row" style="justify-content:flex-end"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn accent" type="button" id="ptSave">Save</button></div>`, m => {
+    $$("[data-close]", m).forEach(x => x.onclick = closeModal); paint();
+    $("#ptAdd").onclick = () => { party.push({ name: "", h: 0 }); paint(); };
+    $("#ptList").oninput = e => { const i = e.target.dataset.pi; if (i == null) return; party[+i][e.target.dataset.pf] = e.target.dataset.pf === "h" ? toInches(e.target.value) : e.target.value; };
+    $("#ptList").onclick = e => { const r = e.target.closest("[data-pr]"); if (r) { party.splice(+r.dataset.pr, 1); paint(); } };
+    $("#ptSave").onclick = () => { const p = party.filter(x => x.name.trim()).map(x => ({ name: x.name.trim().slice(0, 30), h: Math.round((x.h || 0) * 10) / 10 }));
+      T.trip.party = p; updateDoc(doc(fs, "trips/" + cur.id), { party: p }).catch(fail); closeModal(); renderTrip(); };
+  });
+}
+// a compact live list for Today, for the park(s) that day
+function todayParksHtml(iso) {
+  const pks = T.days[iso]?.parks || []; if (!pks.length) return "";
+  return pks.map(p => `<div class="card"><div class="row between"><h3>🎢 ${esc(p.name)}</h3><a class="linkbtn" href="#/t/${cur.id}/parks" data-gopark="${iso}|${esc(p.pid)}">Open park plan</a></div><div class="tp-live" data-tlive="${esc(p.pid)}"><span class="hint">Loading wait times…</span></div></div>`).join("");
+}
+async function fillTodayParks(iso) {
+  for (const p of T.days[iso]?.parks || []) {
+    const el = document.querySelector(`[data-tlive="${CSS.escape(p.pid)}"]`); if (!el) continue;
+    try { const data = await tpLive(p.pid); const its = (p.items || []).filter(i => !i.done && i.t !== "RESTAURANT");
+      const rows = its.map(i => ({ i, l: data[i.eid] })).sort((a, b) => ((a.l?.status === "OPERATING" ? a.l.queue?.STANDBY?.waitTime ?? 0 : 999) - (b.l?.status === "OPERATING" ? b.l.queue?.STANDBY?.waitTime ?? 0 : 999)));
+      el.innerHTML = rows.length ? rows.slice(0, 12).map(r => liveRow(r.i, r.l)).join("") : `<p class="hint">Add rides to your park plan to see their waits here.</p>`;
+    } catch { el.innerHTML = `<span class="hint">Couldn't reach live wait times.</span>`; }
+  }
 }
 
 // ================================================================ BUDGET
@@ -3209,6 +3454,11 @@ function renderMap() {
     Object.values(T.bookings).forEach(b => { if (b.kind === "lodging" && b.lat != null && (!mapFocus || (b.checkIn <= mapFocus && mapFocus < b.checkOut))) add(b.lat, b.lon, pin("home", "var(--d3)"), `<b>${esc(b.title || "Stay")}</b><br>${esc(fmtD(b.checkIn))} – ${esc(fmtD(b.checkOut))}`); });
   } else if (tab === "places") {
     placeList().filter(hasPt).filter(p => (!PF.type || p.type === PF.type) && (!PF.city || p.city === PF.city) && (!PF.country || p.country === PF.country)).forEach(p => add(p.lat, p.lon, icon("", "dot", TYPE[p.type].col, 16), popupFor(p), p.id));
+  } else if (tab === "parks" && parkSel && parkOf(parkSel.iso, parkSel.pid)) {
+    const its = parkOf(parkSel.iso, parkSel.pid).items.filter(i => i.lat != null && !i.done);
+    its.forEach((it, k) => add(it.lat, it.lon, icon(String(k + 1), "num", it.must ? "#C9A227" : colVal(dayColor(parkSel.iso, tripDays().indexOf(parkSel.iso))), 24), `<b>${esc(it.name)}</b>${it.must ? "<br>★ Must-do" : ""}`));
+    if (its.length > 1) L.polyline(its.map(i => [i.lat, i.lon]), { color: colVal(dayColor(parkSel.iso, tripDays().indexOf(parkSel.iso))), weight: 3, opacity: .7, dashArray: "5 6" }).addTo(layer);
+    if (!its.length) { const p = parkOf(parkSel.iso, parkSel.pid); if (p.lat != null) pts.push([p.lat, p.lon]); }
   } else if (tab === "food") {
     placeList().filter(p => hasPt(p) && FOODT.includes(p.type) && (!RF.kind || p.type === RF.kind) && (!RF.country || p.country === RF.country) && (!RF.city || p.city === RF.city)).forEach(p => add(p.lat, p.lon, icon("", "dot", TYPE[p.type].col, 16), popupFor(p), p.id));
     if (Array.isArray(eat.list)) eat.list.slice(0, 24).forEach(x => add(x.lat, x.lon, icon("", "dot", "var(--muted)", 11), `<b>${esc(x.tags.name)}</b>${x.tags.cuisine ? "<br>" + esc(x.tags.cuisine.replace(/[_;]/g, " ")) : ""}`));
@@ -3228,7 +3478,7 @@ function renderMap() {
     chips.innerHTML = `<button type="button" class="${!mapFocus ? "on" : ""}" data-mday="">All days</button>` + withPlaces.map(([iso, i, n]) => `<button type="button" class="${mapFocus === iso ? "on" : ""}" data-mday="${iso}" style="--mc:${dayColor(iso, i)}" title="${esc(dayLabel(iso))}${n ? ` · ${n} place${n === 1 ? "" : "s"}` : " · travel day"}"><i></i>Day ${i + 1}${n ? "" : " ✈"}</button>`).join("");
     chips.onclick = e => { const b = e.target.closest("[data-mday]"); if (!b) return; focusDay(b.dataset.mday || null); if (b.dataset.mday && cur.tab === "plan") document.getElementById("day-" + b.dataset.mday)?.scrollIntoView({ block: "start", behavior: reduceMotion() ? "auto" : "smooth" }); };
   }
-  const key = tab + "|" + (mapFocus || "") + "|" + (bkFocus || "") + "|" + BF.kind + "|" + pts.length;
+  const key = tab + "|" + (mapFocus || "") + "|" + (bkFocus || "") + "|" + BF.kind + "|" + (tab === "parks" && parkSel ? parkSel.iso + parkSel.pid : "") + "|" + pts.length;
   if (fitPending || key !== lastFitKey) {
     // Leaflet skips a new zoom while one is still animating, so wait for it
     const fit = () => { if (!map) return; if (pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.15), { maxZoom: 15, animate: !reduceMotion() }); else { const ds = tripDests(T.trip).filter(hasPt); if (ds.length > 1) map.fitBounds(L.latLngBounds(ds.map(d => [d.lat, d.lon])).pad(0.3), { maxZoom: 6 }); else if (ds.length) map.setView([ds[0].lat, ds[0].lon], 6); } };
