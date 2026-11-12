@@ -9,14 +9,14 @@ service cloud.firestore {
     // People who can use the original Europe 2029 site:
     function europeGuest() { return signedIn() && me() in ['your_gmail@gmail.com', 'friend_gmail@gmail.com']; }
     // Who manages Wayfinder: these people can add others from the app (picture menu → People & access).
-    function admin() { return signedIn() && me() in ['your_gmail@gmail.com']; }
+    function admin() { return signedIn() && me() in ['your_gmail@gmail.com', 'friend_gmail@gmail.com']; }
 
     // People who can create new trips: admins, plus anyone added in the app.
     // (Invited friends can always see and edit the trips they're on.)
     function access() { return /databases/$(database)/documents/settings/access; }
     function tripCreator() { return admin() || (signedIn() && exists(access()) && me() in get(access()).data.creators); }
     match /settings/access {
-      allow read: if signedIn();
+      allow read: if admin() || (signedIn() && me() in resource.data.creators);
       allow write: if admin();
     }
 
