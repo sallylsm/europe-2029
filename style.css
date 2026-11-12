@@ -704,3 +704,11 @@ details summary { cursor: pointer; padding: 6px 0; }
 @media print { .mb-day { page-break-inside: avoid; } .mb .mb-cover { min-height: 340px; } .mb-stats div, .mb-journal { background: #f3f5f6 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; } }
 .print-bar .seg { display: inline-flex; width: auto; } .print-bar .seg button { padding: 6px 14px; white-space: nowrap; }
 .mb-day h2 { border: 0; padding: 0; margin: 0; }
+/* profile */
+.avatar.has-img { background: var(--paper); overflow: hidden; padding: 0; }
+.avatar img { width: 100%; height: 100%; object-fit: cover; border-radius: 50%; display: block; }
+.pf-top { display: flex; gap: 16px; align-items: center; }
+.pf-pic { width: 84px; height: 84px; font-size: 32px; border-width: 3px; }
+.pf-btns { display: grid; gap: 6px; justify-items: start; }
+#meEmail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 180px; }
+#profBtn { flex: none; }

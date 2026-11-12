@@ -38,7 +38,7 @@ try { const t = JSON.parse(localStorage.getItem("e29-theme") || "{}"), m = t.mod
   <div class="menu-wrap">
     <button class="iconbtn" id="meBtn" type="button" aria-expanded="false" aria-controls="mePop" aria-label="Account and theme"><span class="avatar" id="meAv">?</span></button>
     <div class="pop" id="mePop" hidden>
-      <div><b id="meName"></b><div class="hint" id="meEmail"></div></div>
+      <div class="row between" style="gap:10px"><div style="min-width:0"><b id="meName"></b><div class="hint" id="meEmail"></div></div><button class="btn ghost small" id="profBtn" type="button">Edit profile</button></div>
       <h3>Color</h3>
       <div class="swatches" id="swatches"></div>
       <h3>Font</h3>
