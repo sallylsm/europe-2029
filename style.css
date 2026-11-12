@@ -751,3 +751,9 @@ details summary { cursor: pointer; padding: 6px 0; }
 .wt.down { background: #2B2F36; color: #fff; } .wt.closed { background: var(--paper); color: var(--muted); border: 1px solid var(--line); }
 .mb-rides { margin: 0; font-size: 14px; }
 .view > *, .tp-item, .tp-row, .tl-row, .tp-live { min-width: 0; } .tp-row .grow b, .tl-row b { overflow-wrap: anywhere; } .tp-hr { flex-wrap: wrap; }
+.map-only { display: none; } @media (max-width: 960px) { .map-only { display: inline-flex; } }
+.tp-eta { font: 600 12px var(--f-mono); color: var(--muted); }
+.tp-end { list-style: none; text-align: right; padding: 4px 6px; }
+.order-opts { display: grid; gap: 8px; }
+.order-opt { display: grid; gap: 3px; text-align: left; padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); cursor: pointer; font: inherit; color: var(--ink); }
+.order-opt:hover:not(:disabled) { border-color: var(--ink); } .order-opt span { font-size: 13px; color: var(--muted); } .order-opt:disabled { opacity: .55; cursor: default; }
