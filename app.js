@@ -549,8 +549,9 @@ function renderGate(msg) {
     }
   };
 }
+const shareToken = () => (location.hash.match(/^#\/s\/([\w-]{16,})/) || [])[1];
 onAuthStateChanged(auth, async user => {
-  if (!user) { ME = null; unsubHome?.(); leaveTrip(); renderGate(); return; }
+  if (!user) { ME = null; unsubHome?.(); leaveTrip(); if (shareToken()) renderShare(shareToken()); else renderGate(); return; }
   ME = { uid: user.uid, email: (user.email || "").toLowerCase(), name: (user.displayName || "").split(" ")[0] || (user.email || "").split("@")[0], gphoto: user.photoURL || "", gname: user.displayName || "" };
   $("#meBtn").hidden = false; $("#meAv").textContent = ME.name.charAt(0).toUpperCase(); $("#meName").textContent = user.displayName || ME.name; $("#meEmail").textContent = ME.email;
   subscribeHome(); subscribeLoyalty(); subscribeAccess(); subscribeProfile(); route();
@@ -559,7 +560,8 @@ onAuthStateChanged(auth, async user => {
 // ================================================================ ROUTING
 window.addEventListener("hashchange", route);
 function route() {
-  if (!ME) return;
+  if (shareToken()) { leaveTrip(); renderShare(shareToken()); return; }
+  if (!ME) { if (auth.currentUser === null) renderGate(); return; }
   const m = location.hash.match(/^#\/t\/([\w-]+)(?:\/(\w+))?/);
   if (location.hash.startsWith("#/help")) { leaveTrip(); renderHelp(); return; }
   if (m) openTrip(m[1], m[2] || (TRIPS[m[1]] && tripDaysOf(TRIPS[m[1]]).includes(isoOf(new Date())) ? "today" : "plan"));
@@ -631,7 +633,7 @@ function newTripModal() {
 }
 
 // ================================================================ TRIP VIEW
-const TABS = [["today", "Today"], ["overview", "Overview"], ["explore", "Explore"], ["notes", "Notes"], ["places", "Places"], ["plan", "Itinerary"], ["bookings", "Bookings"], ["food", "Restaurants"], ["budget", "Budget"], ["todo", "To-do"], ["packing", "Packing"], ["guide", "Country guide"], ["parks", "Theme parks"]];
+const TABS = [["today", "Today"], ["overview", "Overview"], ["explore", "Explore"], ["notes", "Notes"], ["places", "Places"], ["plan", "Itinerary"], ["bookings", "Bookings"], ["food", "Restaurants"], ["budget", "Budget"], ["todo", "To-do"], ["packing", "Packing"], ["album", "Photos"], ["guide", "Country guide"], ["parks", "Theme parks"]];
 function leaveTrip() {
   if (!cur) return;
   cur.unsubs.forEach(u => u()); cur = null;
@@ -645,7 +647,7 @@ function openTrip(id, tab) {
   $("#app").innerHTML = `<div class="trip layout-${layout}"><aside class="side" id="side" aria-label="Trip sections"></aside><div class="panel" id="panel"><div class="view"><p class="hint">Loading trip…</p></div></div><div class="mapwrap"><div id="map"></div><div class="map-days" id="mapDays" hidden></div></div></div><button class="btn accent mapbtn" id="mapToggle" type="button">Map</button>`;
   $("#mapToggle").onclick = () => { document.body.classList.toggle("show-map"); $("#mapToggle").textContent = document.body.classList.contains("show-map") ? "List" : "Map"; map?.invalidateSize(); };
   initMap();
-  const rerender = debounce(() => { if (cur?.id === id) { renderTrip(true); renderMap("data"); } }, 60);
+  const rerender = debounce(() => { if (cur?.id === id) { renderTrip(true); renderMap("data"); pushShare(); } }, 60);
   cur.unsubs.push(onSnapshot(doc(fs, "trips/" + id), s => {
     if (!s.exists()) { $("#panel").innerHTML = `<div class="view"><p class="banner">This trip doesn't exist anymore, or you're no longer a member.</p><a href="#/">Back to your trips</a></div>`; return; }
     T.trip = { ...s.data() };
@@ -679,7 +681,7 @@ function renderTrip(fromData = false) {
     <nav class="tabs" aria-label="Trip sections">${TABS.map(([k, l]) => `<a href="#/t/${cur.id}/${k}" ${cur.tab === k ? 'aria-current="page"' : ""}>${l}</a>`).join("")}</nav>
     <div class="view" id="view"></div>`;
   $("#inviteBtn").onclick = inviteModal; $("#calBtn").onclick = calendarModal;
-  ({ plan: viewPlan, places: viewPlaces, bookings: viewBookings, budget: viewBudget, notes: viewNotes, overview: viewOverview, explore: viewExplore, todo: viewTodo, packing: viewPacking, food: viewFood, today: viewToday, guide: viewGuide, parks: viewParks }[cur.tab] || viewPlan)($("#view"));
+  ({ plan: viewPlan, places: viewPlaces, bookings: viewBookings, budget: viewBudget, notes: viewNotes, overview: viewOverview, explore: viewExplore, todo: viewTodo, packing: viewPacking, food: viewFood, today: viewToday, guide: viewGuide, parks: viewParks, album: viewAlbum }[cur.tab] || viewPlan)($("#view"));
   if (cur.tab === "plan") { loadWeather(); loadHours(); }
   renderSide();
   if (scrollToDay && cur.tab === "plan") { const el = document.getElementById("day-" + scrollToDay); scrollToDay = null; if (el) { el.scrollIntoView({ block: "start", behavior: reduceMotion() ? "auto" : "smooth" }); return; } }
@@ -712,6 +714,7 @@ function renderSide() {
     ${item("budget", "Budget")}
     ${item("todo", "To-do", "", todoOpen || "")}
     ${item("packing", "Packing", "", pk.total ? `${pk.done}/${pk.total}` : "")}
+    ${item("album", "Photos", "", Object.keys(T.photos).length || "")}
     ${item("guide", "Country guide")}
     <a href="#/t/${cur.id}/print" class="side-item side-export ${tab === "print" ? "on" : ""}"><span>Export PDF</span></a>
   </nav>`;
@@ -734,7 +737,9 @@ function setLayout(l) {
   $$("[data-layout]").forEach(b => b.setAttribute("aria-pressed", b.dataset.layout === l));
   if (map) setTimeout(() => { map.invalidateSize(); fitPending = true; renderMap(); }, 60);
 }
-document.addEventListener("focusout", () => setTimeout(() => { if (pendingRender && cur) { pendingRender = false; renderTrip(); renderMap(); } }, 0));
+// catch up once you leave a field, but not while you're moving between fields of the same form
+document.addEventListener("focusout", () => setTimeout(() => { const a = document.activeElement, typing = a && $("#panel")?.contains(a) && a.matches("input:not([type=checkbox]), textarea, select");
+  if (pendingRender && cur && !typing) { pendingRender = false; renderTrip(); renderMap(); } }, 0));
 
 // ---------------------------------------------------------------- places data
 const placeList = () => Object.entries(T.places).map(([id, p]) => ({ id, ...p, type: TYPE[p.type] ? p.type : "other", hearts: p.hearts || {} }));
@@ -1223,7 +1228,7 @@ function placeCard(p) {
   return `<article class="place" id="pl-${p.id}" data-id="${p.id}" style="--tc:${t.col}">
     <div class="place-img"><div class="ph">${esc((p.name || "?").charAt(0).toUpperCase())}</div>${ph ? `<img src="${esc(ph)}" alt="${esc(p.name)}" data-zoom loading="lazy" onerror="this.remove()">${creditHtml(p)}` : ""}<span class="type-chip">${esc(t.label)}</span></div>
     <div class="place-body"><span class="nm">${esc(p.name)}</span><span class="where">${esc([p.city !== p.name ? p.city : "", p.country].filter(Boolean).join(", "))}</span>
-      ${p.notes ? `<p class="notes">${esc(p.notes)}</p>` : ""}
+      ${p.notes ? `<p class="notes">${esc(p.notes)}</p>` : ""}${reminderFacts(p.id)}
       <div class="place-foot"><button class="heart ${mine ? "on" : ""}" type="button" data-heart aria-pressed="${mine}" title="${esc(who.join(", "))}">♥ ${who.length || ""}</button>
         <select data-pday aria-label="Schedule ${esc(p.name)}">${dayOptions(tripDays().includes(p.day) ? p.day : "")}</select><span class="grow"></span>
         ${hasPt(p) ? `<button class="ext" type="button" data-locate style="border:0;background:none;cursor:pointer">Map</button>` : ""}
@@ -1262,6 +1267,7 @@ function placeModal(id) {
     <label class="field" for="pmLink">Link<input id="pmLink" type="url" maxlength="500" value="${esc(p?.link || "")}" placeholder="https://…"></label>
     <label class="field" for="pmNotes">Notes<textarea id="pmNotes" rows="3" maxlength="600" placeholder="What to get, best time to go, who recommended it…">${esc(p?.notes || "")}</textarea></label>
     <div class="grid2"><label class="field" for="pmDay">Day<select id="pmDay">${dayOptions(p?.day || "")}</select></label><label class="field" for="pmTime">Time<input id="pmTime" type="time" value="${esc(p?.time || "")}"></label></div>
+    <div class="grid2"><label class="field" for="pmBookBy">Book by<input id="pmBookBy" type="date" value="${esc(p?.bookBy || "")}"></label><label class="field" for="pmBookNote">What to book<input id="pmBookNote" maxlength="80" value="${esc(p?.bookNote || "")}" placeholder="Tickets go on sale, reserve a table…"></label></div>
     <div class="field"><span>Photo</span><div class="photo-box" id="pmDrop"><div class="photo-prev" id="pmPrev">No photo</div>
       <div style="display:grid;gap:6px"><div class="row" style="gap:6px"><button class="btn ghost small" type="button" id="pmFind">Find a photo</button><label class="btn ghost small file-btn">Upload<input type="file" id="pmFile" accept="image/*"></label><button class="linkbtn" type="button" id="pmRm">Remove</button></div>
       <span class="hint" id="pmCredit"></span><span class="hint">Or paste (Ctrl/⌘ + V) or drop an image here.</span></div></div></div>
@@ -1304,7 +1310,7 @@ function placeModal(id) {
       const base = p || newPlaceFrom({ name });
       const pid = id || uidGen();
       T.places[pid] = { ...base, name, type: $("#pmType").value, city, country, lat, lon, link: $("#pmLink").value.trim().slice(0, 500), notes: $("#pmNotes").value.trim().slice(0, 600),
-        day, time: $("#pmTime").value, order: day && day !== base.day ? dayPlaces(day).length : base.order ?? 0,
+        day, time: $("#pmTime").value, bookBy: validIso($("#pmBookBy").value) ? $("#pmBookBy").value : "", bookNote: $("#pmBookNote").value.trim().slice(0, 80), order: day && day !== base.day ? dayPlaces(day).length : base.order ?? 0,
         photo: ph?.photo || "", photoUrl: ph?.photoUrl || "", photoCredit: ph?.photoCredit || "", photoLink: ph?.photoLink || "", photoBy: ph?.photoBy || "", photoSrc: ph?.photoSrc || "" };
       if (ph?.dl) trackUnsplash(ph.dl);
       savePlace(pid); closeModal(); renderTrip(); renderMap();
@@ -1966,7 +1972,12 @@ const HELP = [
     <li><b>Your plan</b>: pick rides, shows and food, star your <b>must-dos</b>, note Lightning Lane plans and return times, and drag to reorder. Each stop shows a rough time (≈ 10:15am) based on opening time, walking and typical waits.</li>
     <li><b>Best order</b>: <i>Rope drop</i> puts must-dos first while lines are short, <i>Shortest walk</i> avoids zigzagging, and on the day, <i>Shortest waits right now</i> re-plans using live waits.</li>
     <li><b>Who's riding</b>: add everyone's height, and rides with a minimum height flag anyone too short.</li>
-    <li><b>Live wait times</b> on the day, shortest first, refreshing every 5 minutes, with single rider, Lightning Lane return times and showtimes. Today shows them too, and rides you check off go into the memory book.</li></ul>
+    <li><b>Live wait times</b> on the day, shortest first, refreshing every 5 minutes, with single rider, Lightning Lane return times and showtimes. Today shows them too, and rides you check off go into the memory book.</li>
+    <li><b>Wait alerts</b>: open a ride's details and set <i>Alert me under</i> (say 30 minutes). On the day, Wayfinder alerts you when the wait drops below it.</li>
+    <li><b>Lightning Lane helper</b>: tap <i>I just booked one</i> and it counts down to when you can book the next. Return times you enter count down too, with a "Go now" nudge.</li>
+    <li><b>Planned times</b>: give a show or dining reservation a time (today's showtimes are suggested) and it stays at that time in the plan and in Best order, with an alert 15 minutes before.</li>
+    <li><b>Snacks and characters</b>: add a Dole Whip, churros or a character meet to your plan like any ride.</li>
+    <li><b>Before you go</b>: booking reminders for the park day. Disneyland and Walt Disney World dining reservations (60 days ahead) are added automatically, and you can add your own, like buying tickets.</li></ul>
     <p>Park data comes from ThemeParks.wiki. Book Lightning Lanes in the official park app.</p>`],
   ["food", "Restaurants", `<p>The Restaurants tab gathers the places to eat and drink you've saved, plus your restaurant reservations. <b>Find places to eat</b> searches around the places on your days, by restaurants, cafés or bars, and <i>Save</i> adds one to your list.</p>`],
   ["gmail", "Import from Gmail", `<p>In <b>Bookings → Import from Gmail</b>, Wayfinder asks Google for read-only access, finds confirmation emails, and shows the flights, stays, cars, trains and reservations it can read. You pick which to add. Connecting flights on one booking become one flight with layovers. Emails are read in your browser and nothing else is kept.</p>
@@ -1975,11 +1986,15 @@ const HELP = [
     <li>In <a href="https://console.cloud.google.com/auth/audience" target="_blank" rel="noopener">Google Auth Platform → Audience</a>: if it says <i>Testing</i>, add each person's Gmail under <b>Test users</b>.</li>
     <li>The first time, Google says it hasn't verified the app. That's expected for a personal app: click <b>Advanced → Go to …</b> and tick the box to allow reading email.</li></ol>`],
   ["budget", "Budget and money", `<p>Log what you spend in any currency. Wayfinder converts it to the trip's home currency with that day's exchange rate, splits it between the people you pick, and works out who owes whom. Bookings with a cost count too.</p To settle up, add how people can pay you (Venmo, PayPal, Cash App or Zelle). Whoever owes gets a pay button with the amount filled in, then taps <b>Mark paid</b>.</p>`],
-  ["lists", "To-do and packing", `<p><b>To-do</b> is shared: assign tasks and set due dates. <b>Packing</b> is private: everyone on the trip has their own list.</p>`],
+  ["lists", "To-do and packing", `<p><b>To-do</b> is shared: assign tasks and set due dates. <b>Packing</b> is private: everyone on the trip has their own list. <b>Suggested for this trip</b> at the top of Packing adds things the weather and destinations call for, like an umbrella when rain is likely or the right plug adapter.</p>`],
+  ["photos", "Photos and the family link", `<p><b>Photos</b> is a shared album: everyone on the trip can add photos (several at once), pick the day they belong to, add captions, and filter by day or person. Tap a photo to flip through them. They also go into the memory book.</p>
+    <p><b>Family link</b> (in <b>Share</b>) makes a view-only page of the day-by-day plan, flights and where you're staying for family at home. They don't need to sign in. It leaves out costs, confirmation numbers, notes and photos, and turning it off deletes the page.</p>`],
   ["calendar", "Calendar and reminders", `<p><b>Add to calendar</b> (top of a trip) downloads a calendar file with your flights, check-ins, each day's plan and stops with times. Open it on your iPhone or Mac, or import it into Google Calendar. It includes alerts: 3 hours before a flight, when online check-in opens, and the day before free cancellation ends.</p>
     <p>In a booking, set <b>Free cancellation until</b> and, for flights, when <b>online check-in opens</b>. Bookings show these, and Wayfinder alerts you while it's open.</p>
+    <p>For anything that has to be booked ahead (tickets that go on sale on a date, a popular restaurant), edit the place and set <b>Book by</b>. <b>Coming up</b> on Overview lists everything due soon, and these go into Add to calendar too.</p>
+    <p>Add your <b>passport expiry date</b> in your profile, and Wayfinder warns you on any trip where you'd have less than 6 months left. Overview also shows the <b>time difference</b> and a simple <b>jet lag plan</b>, and Today shows the local time next to the time at home.</p>
     <p><b>Loyalty numbers</b> (picture menu, top right) are private to you. Each one shows on matching bookings, like your Atmos number on Alaska and Hawaiian flights, with a copy button.</p>`],
-  ["guide", "Country guide", `<p>For each country on your trip: plug type and voltage, emergency numbers, tipping customs, entry steps for US passports with links to the official sites, and handy phrases. Entry rules change, so always confirm on the official sites before you fly.</p>`],
+  ["guide", "Country guide", `<p>For each country on your trip: plug type and voltage, emergency numbers, tipping customs, entry steps for US passports with links to the official sites, and handy phrases. Tap 🔊 to hear a phrase (it uses your phone's voices, so it works offline). Entry rules change, so always confirm on the official sites before you fly.</p>`],
   ["export", "Export and offline", `<p><b>Export PDF</b> has two styles: a <b>Memory book</b> (photos, journal entries, places you visited) and a printable trip book (itinerary with route sketches, bookings, budget, lists). Pick what to include, then save as PDF. Once you've opened a trip, it keeps working offline, and your edits sync when you're back online.</p>`],
   ["google", "Google Maps (optional)", `<p>With a Google Maps key, Wayfinder uses Google for the map, for search (so it can tell branches like Ippudo Harajuku and Ippudo Shinjuku apart, with exact addresses), and for <i>Stays nearby</i> and <i>Find places to eat</i>, with ratings. Without a key, it uses the free OpenStreetMap versions.</p>
     <ol><li>In <a href="https://console.cloud.google.com/billing" target="_blank" rel="noopener">Google Cloud → Billing</a>, link a billing account to your Firebase project.</li>
@@ -2135,6 +2150,7 @@ function viewToday(v) {
       <div style="text-align:center"><h2>${isToday ? "Today" : esc(fmtD(iso, { weekday: "long" }))}</h2><span class="hint">${esc(fmtD(iso, { weekday: isToday ? "long" : undefined, month: "long", day: "numeric" }))} · Day ${i + 1} of ${days.length}${!isToday && real < days[0] ? ` · in ${daysBetween(real, iso)} days` : ""}</span></div>
       <button class="iconbtn" type="button" data-tday="${days[i + 1] || ""}" ${i < days.length - 1 ? "" : "disabled"} aria-label="Next day">›</button></div>
     ${wxChip(iso, true)}
+    ${isToday ? tzLine(iso) + comingUpHtml(3) : ""}
     ${bk.length || stay ? `<div class="card"><h3>Bookings</h3><div class="today-bk">${bk.map(x => `<button type="button" class="bk-mini" data-bedit="${x.id}">${x.txt}</button>`).join("")}${stay && !bk.some(x => x.id === stay[0]) ? `<button type="button" class="bk-mini" data-bedit="${stay[0]}"><b>Staying at</b> ${esc(stay[1].title || "your stay")}${stay[1].addr ? " · " + esc(stay[1].addr) : ""}</button>` : ""}</div></div>` : ""}
     ${todayParksHtml(iso)}
     ${nextHtml}
@@ -2167,18 +2183,39 @@ function reminders(withPast) {
       if (dep && f.depTime) { const at = new Date(dep - (+(b.checkinH || 24)) * 36e5); out.push({ id, at, kind: "checkin", txt: `Online check-in opens for ${f.num || nm}`, short: `Check-in opens ${fmtD(isoOf(at), { weekday: "short", month: "short", day: "numeric" })} ${String(at.getHours()).padStart(2, "0")}:${String(at.getMinutes()).padStart(2, "0")}` }); }
     }
   }
-  return out.filter(r => withPast || r.at > now - 864e5).sort((a, b) => a.at - b.at);
+  for (const p of Object.values(T.places)) if (validIso(p.bookBy)) { const what = p.bookNote || "Book"; out.push({ id: p.id, at: localDT(p.bookBy, "09:00"), kind: "book", txt: `${what}: ${p.name}`, short: `${what} by ${fmtD(p.bookBy, { weekday: "short", month: "short", day: "numeric" })}` }); }
+  for (const iso of parkDays()) for (const pk of T.days[iso].parks) for (const r of parkReminders(iso, pk)) out.push({ id: `park:${iso}:${pk.pid}:${r.id}`, at: localDT(r.d, "09:00"), kind: "book", txt: `${r.t} (${pk.name})`, short: r.t, park: { iso, pid: pk.pid } });
+  return out.filter(r => r.at && (withPast || r.at > now - 864e5)).sort((a, b) => a.at - b.at);
+}
+const REM_IC = { cancel: "↩", checkin: "🛫", book: "📌", doc: "🛂" };
+// passport (and Global Entry) from your profile: many countries want 6 months left after you travel
+function docWarnings(t = T.trip) {
+  if (!validIso(t?.end)) return [];
+  const out = [], six = addDays(t.end, 182), abroad = tripCountries().length > 0;
+  if (validIso(PROFILE.passportExp) && abroad) {
+    if (PROFILE.passportExp < t.end) out.push({ lvl: "bad", txt: `Your passport expires ${fmtD(PROFILE.passportExp, { month: "short", day: "numeric", year: "numeric" })}, before this trip ends. Renew it now.` });
+    else if (PROFILE.passportExp < six) out.push({ lvl: "warn", txt: `Your passport expires ${fmtD(PROFILE.passportExp, { month: "short", day: "numeric", year: "numeric" })}, less than 6 months after this trip. Many countries require 6 months left, so plan to renew (routine renewal takes weeks).` });
+  }
+  if (validIso(PROFILE.geExp) && PROFILE.geExp < t.end) out.push({ lvl: "warn", txt: `Your Global Entry / trusted traveler membership expires ${fmtD(PROFILE.geExp, { month: "short", day: "numeric", year: "numeric" })}, before this trip ends.` });
+  return out;
+}
+function comingUpHtml(limit = 6) {
+  const now = Date.now(), list = reminders().filter(r => r.at - now < 120 * 864e5).slice(0, limit), dw = docWarnings();
+  if (!list.length && !dw.length) return "";
+  return `<div class="card coming"><h3>Coming up</h3>
+    ${dw.map(w => `<div class="warn-banner ${w.lvl}">🛂 ${esc(w.txt)}</div>`).join("")}
+    ${list.map(r => { const d = Math.ceil((r.at - now) / 864e5); return `<div class="cu ${r.at < now ? "now" : remSoon(r) ? "soon" : ""}"><span class="cu-ic">${REM_IC[r.kind] || "•"}</span><span class="grow">${esc(r.txt)}</span><span class="hint">${r.at < now ? "today" : d <= 1 ? "tomorrow" : fmtD(isoOf(r.at), { month: "short", day: "numeric" }) + ` · ${d} days`}</span></div>`; }).join("")}</div>`;
 }
 const remSoon = r => r.at - Date.now() < 3 * 864e5;
-function reminderFacts(id) { return reminders(true).filter(r => r.id === id).map(r => `<span class="rem ${r.at < Date.now() ? "past" : remSoon(r) ? "soon" : ""}">${r.kind === "cancel" ? "↩" : "🛫"} ${esc(r.short)}</span>`).join(""); }
+function reminderFacts(id) { return reminders(true).filter(r => r.id === id).map(r => `<span class="rem ${r.at < Date.now() ? "past" : remSoon(r) ? "soon" : ""}">${REM_IC[r.kind] || ""} ${esc(r.short)}</span>`).join(""); }
 // alerts while the app is open (the calendar export carries the same reminders as alarms)
 function checkReminders() {
   if (!cur || !T.trip) return;
   let seen = {}; try { seen = JSON.parse(localStorage.getItem("trips-rem") || "{}"); } catch {}
   for (const r of reminders()) {
     const key = `${cur.id}|${r.id}|${r.kind}|${+r.at}`, dt = r.at - Date.now();
-    const due = r.kind === "checkin" ? dt <= 0 && dt > -6 * 36e5 : dt > 0 && dt < 24 * 36e5;
-    if (due && !seen[key]) { seen[key] = 1; notify(r.kind === "checkin" ? "Check-in is open" : "Free cancellation ends soon", r.txt); }
+    const due = r.kind === "checkin" || r.kind === "book" ? dt <= 0 && dt > -(r.kind === "book" ? 15 : 6) * 36e5 : dt > 0 && dt < 24 * 36e5;
+    if (due && !seen[key]) { seen[key] = 1; notify(r.kind === "checkin" ? "Check-in is open" : r.kind === "book" ? "Book today" : "Free cancellation ends soon", r.txt); }
   }
   try { localStorage.setItem("trips-rem", JSON.stringify(seen)); } catch {}
 }
@@ -2214,6 +2251,7 @@ function icsText(o) {
   }
   if (o.reminders) for (const r of reminders(true)) { const d = isoOf(r.at), tm = `${String(r.at.getHours()).padStart(2, "0")}:${String(r.at.getMinutes()).padStart(2, "0")}`;
     if (r.kind === "cancel") add(`${r.id}-cancel`, `↩ ${r.txt}`, d, "", { allDay: true, alarms: [["-PT15H", r.txt]] });
+    else if (r.kind === "book") add(`${r.id.replace(/[^\w-]/g, "-")}-book`, `📌 ${r.txt}`, d, "", { allDay: true, alarms: [["PT8H", r.txt], ["-P1D", "Tomorrow: " + r.txt]] });
     else add(`${r.id}-checkin`, `🛫 ${r.txt}`, icsT(d, tm), icsAdd(d, tm, 15), { alarms: [["PT0M", r.txt]] }); }
   if (o.days || o.stops) tripDays().forEach((iso, i) => {
     const ps = dayPlaces(iso); if (!ps.length && !dayCards(iso).length) return;
@@ -2228,7 +2266,7 @@ function calendarModal() {
   const opt = (k, l, h) => `<label class="ics-opt"><input type="checkbox" data-ics="${k}" ${o[k] ? "checked" : ""}><span><b>${l}</b><span class="hint">${h}</span></span></label>`;
   openModal(`<div class="row between"><h2>Add to calendar</h2><button class="iconbtn" type="button" data-close aria-label="Close">×</button></div>
     <p class="hint">Downloads a calendar file. Open it on your iPhone or Mac to add everything to Apple Calendar, or import it in Google Calendar (Settings → Import). Times stay at the local clock time wherever you are.</p>
-    <div class="ics-opts">${opt("bookings", "Bookings", "Flights, trains, hotel check-in and check-out, cars, reservations")}${opt("reminders", "Reminders", "When online check-in opens and the last day to cancel for free")}${opt("days", "Each day's plan", "An all-day event listing the day's stops and notes")}${opt("stops", "Stops with a time", "Their own events, with a 30-minute heads-up")}</div>
+    <div class="ics-opts">${opt("bookings", "Bookings", "Flights, trains, hotel check-in and check-out, cars, reservations")}${opt("reminders", "Reminders", "Check-in opening, last day to cancel for free, and anything you need to book by a date")}${opt("days", "Each day's plan", "An all-day event listing the day's stops and notes")}${opt("stops", "Stops with a time", "Their own events, with a 30-minute heads-up")}</div>
     <p class="hint">If you add it again after changing plans, delete the old events first so nothing is doubled.</p>
     <div class="row" style="justify-content:flex-end"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn accent" type="button" id="icsGo">Download calendar file</button></div>`, m => {
     $$("[data-close]", m).forEach(x => x.onclick = closeModal);
@@ -2407,6 +2445,22 @@ function tripCountries() {
   return [...seen.values()].filter(c => c.name !== "United States");
 }
 loadCG();
+// ---- tap to hear a phrase (the phone's own voices; works offline on most phones)
+const SPEECH = { ja: "ja-JP", ko: "ko-KR", yue: "zh-HK", zh: "zh-CN", zht: "zh-TW", th: "th-TH", vi: "vi-VN", fr: "fr-FR", es: "es-ES", it: "it-IT", de: "de-DE", ptp: "pt-PT", ptb: "pt-BR", nl: "nl-NL", da: "da-DK", sv: "sv-SE", no: "nb-NO", fi: "fi-FI", is: "is-IS", el: "el-GR", cs: "cs-CZ", hu: "hu-HU", pl: "pl-PL", hr: "hr-HR", tr: "tr-TR", id: "id-ID", ms: "ms-MY", fil: "fil-PH", hi: "hi-IN", ar: "ar-SA" };
+const canSpeak = lang => "speechSynthesis" in window && !!SPEECH[lang];
+function voiceFor(tag) {
+  const vs = speechSynthesis.getVoices(), base = tag.split("-")[0];
+  return vs.find(v => v.lang.replace("_", "-") === tag) || (base === "nb" && vs.find(v => /^no/.test(v.lang))) || (tag === "fil-PH" && vs.find(v => /^tl/.test(v.lang))) || vs.find(v => v.lang.startsWith(base));
+}
+if ("speechSynthesis" in window) { speechSynthesis.getVoices(); speechSynthesis.onvoiceschanged = () => speechSynthesis.getVoices(); }
+function say(text, lang, btn) {
+  const tag = SPEECH[lang]; if (!tag) return;
+  speechSynthesis.cancel();
+  const u = new SpeechSynthesisUtterance(text), v = voiceFor(tag); u.lang = tag; if (v) u.voice = v; u.rate = 0.85;
+  if (!v && speechSynthesis.getVoices().length) toast("Your phone doesn't have a voice for this language. Add one in Settings → Accessibility → Spoken Content (iPhone) or Text-to-speech (Android).");
+  btn?.classList.add("on"); u.onend = u.onerror = () => btn?.classList.remove("on");
+  speechSynthesis.speak(u);
+}
 function viewGuide(v) {
   if (!CG) { v.innerHTML = `<p class="hint">Loading…</p>`; loadCG(); return; }
   const list = tripCountries(), pick = cgFind(cgPick);
@@ -2423,14 +2477,15 @@ function viewGuide(v) {
       </div>
       ${c.entry.length ? `<div class="cg-entry"><span class="k">Before you go <span class="hint" style="display:inline;text-transform:none;letter-spacing:0;font-weight:500">for US passports</span></span><ul>${c.entry.map(e => `<li>${esc(e.t)}${e.u ? ` <a class="ext" href="${esc(e.u)}" target="_blank" rel="noopener">Official site ↗</a>` : ""}</li>`).join("")}
         <li>Many countries need your passport valid 3–6 months past your trip. <a class="ext" href="https://travel.state.gov/content/travel/en/international-travel/International-Travel-Country-Information-Pages.html" target="_blank" rel="noopener">US State Dept country info ↗</a></li></ul></div>` : ""}
-      ${ph.length ? `<div class="cg-ph"><span class="k">Handy phrases</span><table>${ph.map(([en, loc, rom]) => `<tr><td>${esc(en)}</td><td><b>${esc(loc)}</b>${rom ? `<span class="hint">${esc(rom)}</span>` : ""}</td></tr>`).join("")}</table></div>` : ""}</section>`;
+      ${ph.length ? `<div class="cg-ph"><span class="k">Handy phrases</span><table>${ph.map(([en, loc, rom]) => `<tr><td>${esc(en)}</td><td><b>${esc(loc)}</b>${rom ? `<span class="hint">${esc(rom)}</span>` : ""}</td><td>${canSpeak(c.lang) ? `<button class="iconbtn say" type="button" data-say="${esc(loc)}" data-lang="${esc(c.lang)}" aria-label="Hear ${esc(en)}">🔊</button>` : ""}</td></tr>`).join("")}</table></div>` : ""}</section>`;
   };
   v.innerHTML = `<div class="row between"><h2>Country guide</h2><select class="input" id="cgAdd" style="width:auto" aria-label="Look up another country"><option value="">Look up another country…</option>${CG.countries.map(c => `<option ${pick?.name === c.name ? "selected" : ""}>${esc(c.name)}</option>`).join("")}</select></div>
     <p class="hint">Plugs, emergency numbers, tipping, entry steps and a few phrases for the countries on this trip. Entry rules change, so always confirm on the official sites before you fly.</p>
     ${shown.length > 1 ? `<div class="chips">${shown.map(c => `<a class="chip" href="#cg-${esc(c.name.replace(/\W+/g, "-"))}" data-jump>${esc(c.name)}</a>`).join("")}</div>` : ""}
     ${shown.map(card).join("") || `<div class="empty">Add your destinations in Overview (or places with a country) and their guides show up here.</div>`}`;
   $("#cgAdd").onchange = e => { cgPick = e.target.value; renderTrip(); setTimeout(() => document.getElementById("cg-" + cgPick.replace(/\W+/g, "-"))?.scrollIntoView({ behavior: "smooth" }), 50); };
-  v.onclick = e => { const a = e.target.closest("[data-jump]"); if (a) { e.preventDefault(); document.querySelector(a.getAttribute("href"))?.scrollIntoView({ behavior: reduceMotion() ? "auto" : "smooth" }); } };
+  v.onclick = e => { const sb = e.target.closest("[data-say]"); if (sb) return say(sb.dataset.say, sb.dataset.lang, sb);
+    const a = e.target.closest("[data-jump]"); if (a) { e.preventDefault(); document.querySelector(a.getAttribute("href"))?.scrollIntoView({ behavior: reduceMotion() ? "auto" : "smooth" }); } };
 }
 
 // ================================================================ MEMORY BOOK (PDF)
@@ -2574,6 +2629,12 @@ function profileModal() {
       <label class="field" for="pfAir">Home airport<input id="pfAir" maxlength="40" value="${esc(PROFILE.homeAirport || "")}" placeholder="e.g. ITO"><span class="hint" id="pfAirName"></span></label>
       <label class="field" for="pfCur">Home currency<select id="pfCur">${CURRENCIES.map(c => `<option ${c === (PROFILE.homeCur || "USD") ? "selected" : ""}>${c}</option>`).join("")}</select></label>
     </div>
+    <label class="field" for="pfTz">Home time zone<select id="pfTz">${(Intl.supportedValuesOf?.("timeZone") || [homeTz()]).map(z => `<option ${z === homeTz() ? "selected" : ""}>${esc(z)}</option>`).join("")}</select><span class="hint">Used for the time zone and jet lag tips on each trip.</span></label>
+    <div class="grid2">
+      <label class="field" for="pfPass">Passport expires<input id="pfPass" type="date" value="${esc(PROFILE.passportExp || "")}"></label>
+      <label class="field" for="pfGE">Global Entry / TSA PreCheck expires<input id="pfGE" type="date" value="${esc(PROFILE.geExp || "")}"></label>
+    </div>
+    <p class="hint">Only the dates are saved, and only you can see them. Wayfinder warns you on any trip where your passport would have less than 6 months left.</p>
     <p class="hint">Your home airport fills in the first flight of new bookings, and your home currency is the default for new trips. Your name and photo show on every trip you're on.</p>
     <p class="hint" id="pfMsg" role="status"></p>
     <div class="row" style="justify-content:flex-end"><button class="btn ghost" type="button" data-close>Cancel</button><button class="btn accent" type="button" id="pfSave">Save</button></div>`, m => {
@@ -2586,7 +2647,7 @@ function profileModal() {
     $("#pfRemove").onclick = () => { photo = ""; paintPhoto(); };
     $("#pfSave").onclick = async () => {
       const ap = airportOf($("#pfAir").value);
-      const p = { name: $("#pfName").value.trim().slice(0, 40), photo, homeAirport: ap ? ap.code : $("#pfAir").value.trim().toUpperCase().slice(0, 40), homeCur: $("#pfCur").value, updated: Date.now() };
+      const p = { name: $("#pfName").value.trim().slice(0, 40), photo, homeAirport: ap ? ap.code : $("#pfAir").value.trim().toUpperCase().slice(0, 40), homeCur: $("#pfCur").value, passportExp: validIso($("#pfPass").value) ? $("#pfPass").value : "", geExp: validIso($("#pfGE").value) ? $("#pfGE").value : "", homeTz: $("#pfTz").value, updated: Date.now() };
       const btn = $("#pfSave"); btn.disabled = true;
       try { await setDoc(doc(fs, `users/${ME.uid}/prefs/profile`), p); PROFILE = p; applyProfile(); await pushProfileToTrips(); closeModal(); toast("Profile saved."); }
       catch (e) { btn.disabled = false; $("#pfMsg").textContent = "Couldn't save. Check your connection."; }
@@ -2615,7 +2676,7 @@ async function tpLive(pid, force) {
   (j.liveData || []).forEach(x => data[x.id] = x);
   TPLIVE[pid] = { at: Date.now(), data }; return data;
 }
-const TPT = { ATTRACTION: ["🎢", "Ride"], SHOW: ["🎭", "Show"], RESTAURANT: ["🍽️", "Dining"] };
+const TPT = { ATTRACTION: ["🎢", "Ride"], SHOW: ["🎭", "Show"], RESTAURANT: ["🍽️", "Dining"], SNACK: ["🍦", "Snack"], CHARACTER: ["🤝", "Character"] };
 const LLOPT = [["", "Standby"], ["multi", "Lightning Lane Multi Pass"], ["single", "Lightning Lane Single Pass"], ["vq", "Virtual queue"], ["single-rider", "Single rider"]];
 const parkDays = () => tripDays().filter(iso => (T.days[iso]?.parks || []).length);
 const hhmm = t => String(t || "").slice(11, 16);   // park-local time from "2027-03-10T08:00:00-07:00"
@@ -2695,9 +2756,20 @@ function suggestOrder(items) {
 
 // ---- ride order: rope drop, shortest walk, or shortest waits right now
 const walkMin = (a, b) => a && b && a.lat != null && b.lat != null ? Math.round(km(a, b) / 4.5 * 60 * 1.3) : 4;   // paths wind, so ×1.3
-const DEF_WAIT = { ATTRACTION: 35, SHOW: 25, RESTAURANT: 45 }, RIDE_LEN = { ATTRACTION: 8, SHOW: 25, RESTAURANT: 0 };
+const DEF_WAIT = { ATTRACTION: 35, SHOW: 25, RESTAURANT: 45, SNACK: 10, CHARACTER: 20 }, RIDE_LEN = { ATTRACTION: 8, SHOW: 25, RESTAURANT: 0, SNACK: 5, CHARACTER: 5 };
+const hm2m = t => /^\d\d:\d\d$/.test(t || "") ? +t.slice(0, 2) * 60 + +t.slice(3) : null;
 const liveWait = (pid, it) => { const l = TPLIVE[pid]?.data?.[it.eid]; return l?.status === "OPERATING" ? (l.queue?.STANDBY?.waitTime ?? null) : l && l.status && l.status !== "OPERATING" ? Infinity : null; };
-function orderBy(items, how, pid) {
+// items planned for a set time stay put: the rest are ordered, then each timed item slots in where the day reaches its time
+function orderBy(items, how, pid, iso) {
+  const timed = items.filter(i => !i.done && hm2m(i.at) != null), free = items.filter(i => !timed.includes(i));
+  let seq = orderFree(free, how, pid);
+  for (const a of timed.sort((x, y) => hm2m(x.at) - hm2m(y.at))) {
+    const est = estTimes(iso || "", pid, seq).at; let k = seq.findIndex(i => !i.done && est[i.eid] != null && est[i.eid] >= hm2m(a.at));
+    if (k < 0) k = seq.length; seq = [...seq.slice(0, k), a, ...seq.slice(k)];
+  }
+  return seq;
+}
+function orderFree(items, how, pid) {
   if (how === "rope") return suggestOrder(items);
   // shows and meals run on their own schedule, so they go after the rides; you can drag them into place
   const done = items.filter(i => i.done), todo = items.filter(i => !i.done && (how !== "waits" || i.t === "ATTRACTION")), later = how === "waits" ? items.filter(i => !i.done && i.t !== "ATTRACTION") : [];
@@ -2712,13 +2784,13 @@ function orderModal(iso, pid) {
   const pk = parkOf(iso, pid), open = Object.values(TPLIVE[pid]?.data || {}).some(l => l.status === "OPERATING");
   const opt = (k, t, d, dis) => `<button type="button" class="order-opt" data-how="${k}" ${dis ? "disabled" : ""}><b>${t}</b><span>${d}</span></button>`;
   openModal(`<div class="row between"><h2>Best order</h2><button class="iconbtn" type="button" data-close aria-label="Close">×</button></div>
-    <p class="hint">Reorders the rides you haven't done yet at ${esc(pk.name)}. You can still drag things around afterwards.</p>
+    <p class="hint">Reorders what you haven't done yet at ${esc(pk.name)}. Anything with a planned time (a show, a dining reservation) stays at its time. You can still drag things around afterwards.</p>
     <div class="order-opts">${opt("rope", "🌅 Rope drop", "Must-dos first while lines are short at opening, then the shortest walk for the rest. Best for planning ahead.")}
       ${opt("walk", "🚶 Shortest walk", "The least walking from ride to ride, so you don't zigzag across the park.")}
       ${opt("waits", "⏱️ Shortest waits right now", open ? "Uses live wait times: picks the next ride that saves the most time between walking and waiting. Must-dos get priority, and rides that are down go last." : "Available while the park is open. Use it on the day to re-plan as lines change.", !open)}</div>`, m => {
     $$("[data-close]", m).forEach(x => x.onclick = closeModal);
     m.querySelector(".order-opts").onclick = e => { const b = e.target.closest("[data-how]"); if (!b) return;
-      updPark(iso, pid, p => { p.items = orderBy(p.items, b.dataset.how, pid); return p; }); closeModal(); renderTrip(); renderMap(); toast(b.dataset.how === "waits" ? "Re-planned around the current waits." : "Reordered."); };
+      updPark(iso, pid, p => { p.items = orderBy(p.items, b.dataset.how, pid, iso); return p; }); closeModal(); renderTrip(); renderMap(); toast(b.dataset.how === "waits" ? "Re-planned around the current waits." : "Reordered."); };
   });
 }
 // rough timeline: start at opening (or now, on the day), add walking + waiting + ride time
@@ -2731,7 +2803,8 @@ function estTimes(iso, pid, items) {
   for (const it of items) {
     if (it.done) { if (it.lat != null) at = it; continue; }
     t += walkMin(at, it);
-    if (it.ll && /^\d\d:\d\d$/.test(it.llTime || "")) { const r = +it.llTime.slice(0, 2) * 60 + +it.llTime.slice(3); t = Math.max(t, r) + 10; }
+    if (hm2m(it.at) != null) t = Math.max(t, hm2m(it.at));   // planned for a set time (a show, a meal)
+    else if (it.ll && /^\d\d:\d\d$/.test(it.llTime || "")) { const r = +it.llTime.slice(0, 2) * 60 + +it.llTime.slice(3); t = Math.max(t, r) + 10; }
     else { const w = isToday ? liveWait(pid, it) : null; t += w == null || w === Infinity ? DEF_WAIT[it.t] ?? 30 : w; }
     out[it.eid] = t; t += RIDE_LEN[it.t] ?? 8; if (it.lat != null) at = it;
   }
@@ -2763,6 +2836,67 @@ document.addEventListener("click", e => {
   map?.closePopup(); renderTrip(); renderMap();
 });
 
+// ---- Lightning Lane helper: when you can book the next one, and countdowns to your return times
+const minsTo = hhmmStr => { const m = hm2m(hhmmStr); if (m == null) return null; const n = new Date(); return m - (n.getHours() * 60 + n.getMinutes()); };
+const inTxt = m => m <= 0 ? "now" : m < 60 ? `in ${m} min` : `in ${Math.floor(m / 60)}h ${m % 60}m`;
+function llCard(iso, pid, pk) {
+  const isToday = iso === isoOf(new Date()), rides = (pk.items || []).filter(i => i.ll && !i.done && hm2m(i.llTime) != null).sort((a, b) => hm2m(a.llTime) - hm2m(b.llTime));
+  if (!(pk.items || []).some(i => i.ll && i.ll !== "single-rider") && !pk.llNext) return "";
+  const next = hm2m(pk.llNext), left = next != null && isToday ? minsTo(pk.llNext) : null;
+  return `<div class="card ll-card"><div class="row between"><h3>⚡ Lightning Lane</h3>${isToday ? `<button class="btn small" type="button" id="llBooked">I just booked one</button>` : ""}</div>
+    ${next != null ? `<p class="ll-next"><b>${left != null && left <= 0 ? "You can book your next Lightning Lane now" : `Next booking: ${fmt12(pk.llNext)}`}</b>${left != null && left > 0 ? ` · ${inTxt(left)}` : ""} <button class="linkbtn" type="button" id="llClear">Clear</button></p>`
+      : `<p class="hint">${isToday ? "Tap <b>I just booked one</b> and Wayfinder will tell you when you can book the next (2 hours later, or sooner once you tap in)." : "On the day, use this to keep track of when you can book your next Lightning Lane."}</p>`}
+    <label class="field" style="max-width:220px">Next booking at<input type="time" id="llNextIn" value="${esc(pk.llNext || "")}"></label>
+    ${rides.length ? `<div class="ll-returns">${rides.map(r => { const m = isToday ? minsTo(r.llTime) : null; return `<div class="tl-row"><span><b>${esc(r.name)}</b><span class="hint">Return at ${fmt12(r.llTime)}${m != null ? " · " + (m < -60 ? "window passed" : inTxt(m)) : ""}</span></span>${m != null && m <= 15 && m > -60 ? `<b class="wt lo">Go now</b>` : ""}</div>`; }).join("")}</div>` : ""}
+    <p class="hint">Book Lightning Lanes in the official park app. Wayfinder only keeps the times.</p></div>`;
+}
+// ---- before you go: booking windows for this park day
+const isDisney = pk => /disney/i.test((pk.dest || "") + " " + pk.name);
+function parkReminders(iso, pk) {
+  const out = (pk.rem || []).map(r => ({ id: r.id, d: r.d, t: r.t, custom: true }));
+  if (isDisney(pk) && /disneyland resort|walt disney world/i.test(pk.dest || "")) out.unshift({ id: "dining", d: addDays(iso, -60), t: `Dining reservations open for ${fmtD(iso, { month: "short", day: "numeric" })} (60 days ahead)` });
+  return out.sort((a, b) => a.d.localeCompare(b.d));
+}
+function beforeCard(iso, pid, pk) {
+  const rs = parkReminders(iso, pk), today = isoOf(new Date());
+  return `<div class="card"><h3>📅 Before you go</h3>
+    ${rs.length ? `<div class="bf-list">${rs.map(r => `<div class="bf ${r.d < today ? "past" : daysBetween(today, r.d) <= 7 ? "soon" : ""}"><b>${esc(fmtD(r.d, { weekday: "short", month: "short", day: "numeric", year: r.d.slice(0, 4) !== today.slice(0, 4) ? "numeric" : undefined }))}</b><span>${esc(r.t)}</span>${r.custom ? `<button class="iconbtn del" type="button" data-bfdel="${esc(r.id)}" aria-label="Remove reminder">×</button>` : ""}</div>`).join("")}</div>` : ""}
+    <form class="row" id="bfForm" style="gap:6px;flex-wrap:wrap"><input class="input grow" id="bfT" maxlength="80" placeholder="e.g. Buy park tickets, book Oga's Cantina" aria-label="Reminder"><input class="input" id="bfD" type="date" style="width:auto" aria-label="Date"><button class="btn ghost small" type="submit">Add reminder</button></form>
+    <p class="hint">These show under Coming up, alert you while Wayfinder is open, and go into Add to calendar.</p></div>`;
+}
+function wireParkExtras(iso, pid) {
+  $("#llBooked") && ($("#llBooked").onclick = () => { const n = new Date(Date.now() + 120 * 60e3); updPark(iso, pid, p => ({ ...p, llNext: `${String(n.getHours()).padStart(2, "0")}:${String(n.getMinutes()).padStart(2, "0")}` })); if ("Notification" in window && Notification.permission === "default") Notification.requestPermission().catch(() => {}); renderTrip(); });
+  $("#llClear") && ($("#llClear").onclick = () => { updPark(iso, pid, p => ({ ...p, llNext: "" })); renderTrip(); });
+  $("#llNextIn") && ($("#llNextIn").onchange = e => { updPark(iso, pid, p => ({ ...p, llNext: e.target.value })); renderTrip(); });
+  $("#bfForm").onsubmit = e => { e.preventDefault(); const t = $("#bfT").value.trim(), d = $("#bfD").value; if (!t || !validIso(d)) { toast("Add what to do and a date."); return; }
+    updPark(iso, pid, p => ({ ...p, rem: [...(p.rem || []), { id: uidGen(), t: t.slice(0, 80), d }] })); renderTrip(); };
+  document.querySelectorAll("[data-bfdel]").forEach(b => b.onclick = () => { updPark(iso, pid, p => ({ ...p, rem: (p.rem || []).filter(r => r.id !== b.dataset.bfdel) })); renderTrip(); });
+}
+// ---- on the day: alerts for waits, Lightning Lane bookings and return times (while Wayfinder is open)
+const tpSeen = (() => { try { return JSON.parse(sessionStorage.getItem("tp-seen") || "{}"); } catch { return {}; } })();
+const tpOnce = (k, title, body) => { if (tpSeen[k]) return; tpSeen[k] = 1; try { sessionStorage.setItem("tp-seen", JSON.stringify(tpSeen)); } catch {} notify(title, body); };
+let tpTick = 0;
+setInterval(async () => {
+  if (!cur || !T.trip) return;
+  const iso = isoOf(new Date()), pks = T.days[iso]?.parks || []; if (!pks.length) return;
+  tpTick++;
+  for (const pk of pks) {
+    const ln = minsTo(pk.llNext); if (ln != null && ln <= 0 && ln > -30) tpOnce(`ll|${iso}|${pk.pid}|${pk.llNext}`, "Lightning Lane", `You can book your next Lightning Lane at ${pk.name}.`);
+    for (const it of pk.items || []) {
+      if (it.done) continue;
+      const rm = minsTo(it.llTime); if (it.ll && rm != null && rm <= 10 && rm > -5) tpOnce(`ret|${iso}|${it.eid}|${it.llTime}`, "Time to head over", `${it.name}: your return time is ${fmt12(it.llTime)}.`);
+      const am = minsTo(it.at); if (am != null && am <= 15 && am > 0 && (it.t === "SHOW" || it.t === "RESTAURANT")) tpOnce(`at|${iso}|${it.eid}|${it.at}`, it.t === "SHOW" ? "Showtime soon" : "Reservation soon", `${it.name} at ${fmt12(it.at)}.`);
+    }
+    if (tpTick % 5 === 1 && (pk.items || []).some(i => i.alertBelow && !i.done)) {
+      try { const data = await tpLive(pk.pid, true);
+        for (const it of pk.items.filter(i => i.alertBelow && !i.done)) { const l = data[it.eid], w = l?.queue?.STANDBY?.waitTime;
+          if (l?.status === "OPERATING" && w != null && w <= it.alertBelow) tpOnce(`wait|${iso}|${it.eid}|${Math.floor(Date.now() / 36e5)}`, `${it.name}: ${w} min`, `The wait just dropped under ${it.alertBelow} minutes.`); }
+        if (cur?.tab === "parks") renderTrip(true);
+      } catch {}
+    }
+  }
+}, 60e3);
+
 // ---- the Theme parks tab
 let parkSel = null, parkTimer = 0; const liveShown = {};
 function viewParks(v) {
@@ -2783,8 +2917,11 @@ function viewParks(v) {
     <div class="card"><div class="row between"><h3>Plan <span class="hint" style="display:inline">${items.filter(i => i.done).length}/${items.length} done</span></h3>
       <span class="row" style="gap:6px"><button class="btn ghost small" type="button" id="tpOrder" ${items.length > 1 ? "" : "disabled"}>Best order…</button><button class="btn small" type="button" id="tpAdd">+ Rides, shows & food</button></span></div>
       ${items.length ? `<ol class="tp-items" id="tpItems">${(() => { const est = estTimes(iso, pid, items); return items.map((it, k) => tpItemHtml(it, k, party, est.at[it.eid])).join("") + (items.some(i => !i.done) ? `<li class="tp-end hint">Done around <b>${mm12(est.end)}</b>${PKOPEN[pid + iso] == null ? " (assuming a 9am start)" : ""}</li>` : ""); })()}</ol>
+        <form class="row tp-custom" id="tpCustom" style="gap:6px"><select class="input" id="tcType" style="width:auto" aria-label="Kind"><option value="SNACK">🍦 Snack</option><option value="CHARACTER">🤝 Character</option></select><input class="input grow" id="tcName" maxlength="60" placeholder="Dole Whip, churro, meet Mickey…" aria-label="Snack or character"><button class="btn ghost small" type="submit">Add</button></form>
         <p class="hint">⭐ marks a must-do. Times are rough estimates from opening, counting walking and typical waits${isToday ? " (live waits today)" : ""}. <b>Best order</b> plans it for you, or drag to change it.</p>`
-      : `<p class="hint">Pick the rides, shows and places to eat you're thinking about, then star your must-dos.</p>`}</div>
+      : `<p class="hint">Pick the rides, shows and places to eat you're thinking about, then star your must-dos.</p><form class="row tp-custom" id="tpCustom" style="gap:6px"><select class="input" id="tcType" style="width:auto" aria-label="Kind"><option value="SNACK">🍦 Snack</option><option value="CHARACTER">🤝 Character</option></select><input class="input grow" id="tcName" maxlength="60" placeholder="Dole Whip, churro, meet Mickey…" aria-label="Snack or character"><button class="btn ghost small" type="submit">Add</button></form>`}</div>
+    ${llCard(iso, pid, pk)}
+    ${beforeCard(iso, pid, pk)}
     <div class="card"><div class="row between"><h3>${isToday ? "Live wait times" : "Wait times right now"}</h3><button class="linkbtn" type="button" id="tpRefresh">Refresh</button></div>
       ${isToday ? "" : `<p class="hint">These are today's live waits at ${esc(pk.name)}, handy for getting a feel for it. On your park day, they're your real waits.</p>`}
       <div id="tpLive"><span class="hint">Loading…</span></div></div>
@@ -2816,6 +2953,9 @@ function viewParks(v) {
       <p class="hint">Updated ${new Date(TPLIVE[pid].at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}${mine.length ? "" : " · showing the whole park; pick rides above to focus on yours"}</p>`;
   };
   paintLive(); if (isToday) parkTimer = setInterval(() => { if (cur?.tab === "parks" && !document.hidden) paintLive(true); else clearInterval(parkTimer); }, 5 * 60e3);
+  wireParkExtras(iso, pid);
+  $("#tpCustom").onsubmit = e => { e.preventDefault(); const n = $("#tcName").value.trim(); if (!n) return;
+    updPark(iso, pid, p => { p.items.push({ eid: "c_" + uidGen(), name: n.slice(0, 60), t: $("#tcType").value, lat: null, lon: null, must: false, ll: "", llTime: "", minH: 0, done: false, notes: "" }); return p; }); renderTrip(); $("#tcName")?.focus(); };
   // drag to reorder
   if (window.Sortable && $("#tpItems")) Sortable.create($("#tpItems"), { handle: ".grip", animation: 160, forceFallback: true, ghostClass: "sort-ghost",
     onStart: () => { dragging = true; }, onEnd: () => { dragging = false; const ids = $$("#tpItems > li").map(li => li.dataset.eid); updPark(iso, pid, p => { p.items = ids.map(id => p.items.find(i => i.eid === id)).filter(Boolean); return p; }); renderTrip(); } });
@@ -2836,9 +2976,10 @@ function viewParks(v) {
   };
   v.onchange = e => {
     const li = e.target.closest("[data-eid]"); if (!li) return; const eid = li.dataset.eid, f = e.target.dataset.f; if (!f) return;
-    const val = f === "done" ? e.target.checked : f === "minH" ? toInches(e.target.value) : e.target.value;
+    const val = f === "done" ? e.target.checked : f === "minH" ? toInches(e.target.value) : f === "alertBelow" ? (parseInt(e.target.value) || 0) : e.target.value;
+    if (f === "alertBelow" && val && "Notification" in window && Notification.permission === "default") Notification.requestPermission().catch(() => {});
     updPark(iso, pid, p => { p.items = p.items.map(i => i.eid === eid ? { ...i, [f]: val } : i); return p; });
-    if (f === "done" || f === "minH" || f === "ll") renderTrip();
+    if (["done", "minH", "ll", "at", "alertBelow", "llTime"].includes(f)) renderTrip();
   };
   v.oninput = e => { const li = e.target.closest("[data-eid]"); if (li && e.target.dataset.f === "notes") updPark(iso, pid, p => { p.items = p.items.map(i => i.eid === li.dataset.eid ? { ...i, notes: e.target.value.slice(0, 300) } : i); return p; }); };
 }
@@ -2847,14 +2988,22 @@ function tpItemHtml(it, k, party, eta) {
   return `<li class="tp-item ${it.done ? "done" : ""} ${it.must ? "must" : ""}" data-eid="${esc(it.eid)}">
     <div class="tp-row"><span class="grip" aria-hidden="true">⋮⋮</span><input type="checkbox" data-f="done" ${it.done ? "checked" : ""} aria-label="Done: ${esc(it.name)}">
       <span class="tp-n">${k + 1}</span><span class="grow"><b>${TPT[it.t]?.[0] || ""} ${esc(it.name)}</b>${eta != null && !it.done ? `<span class="tp-eta">≈ ${mm12(eta)}</span>` : ""}
-        <span class="tp-tags">${it.ll ? `<span class="pill ll">${esc(LLOPT.find(o => o[0] === it.ll)?.[1] || "")}${it.llTime ? " · " + fmt12(it.llTime) : ""}</span>` : ""}${it.minH ? `<span class="pill">${showH(it.minH)} min</span>` : ""}${short.length ? `<span class="pill warn">⚠ Too short: ${short.map(x => esc(x.name)).join(", ")}</span>` : ""}${it.notes ? `<span class="hint">${esc(it.notes)}</span>` : ""}</span></span>
+        <span class="tp-tags">${it.ll ? `<span class="pill ll">${esc(LLOPT.find(o => o[0] === it.ll)?.[1] || "")}${it.llTime ? " · " + fmt12(it.llTime) : ""}</span>` : ""}${it.minH ? `<span class="pill">${showH(it.minH)} min</span>` : ""}${short.length ? `<span class="pill warn">⚠ Too short: ${short.map(x => esc(x.name)).join(", ")}</span>` : ""}${hm2m(it.at) != null ? `<span class="pill">🕒 ${fmt12(it.at)}</span>` : ""}${it.alertBelow ? `<span class="pill">🔔 under ${it.alertBelow}m</span>` : ""}${it.notes ? `<span class="hint">${esc(it.notes)}</span>` : ""}</span></span>
       <button class="iconbtn star ${it.must ? "on" : ""}" type="button" data-must aria-pressed="${!!it.must}" aria-label="Must-do">${it.must ? "★" : "☆"}</button>
       <button class="iconbtn" type="button" data-more aria-label="Details for ${esc(it.name)}">⋯</button>
       <button class="iconbtn del" type="button" data-tirm aria-label="Remove ${esc(it.name)}">×</button></div>
-    <div class="tp-more">${it.t === "ATTRACTION" ? `<label class="field">How you'll ride<select data-f="ll">${LLOPT.map(([v2, l]) => `<option value="${v2}" ${it.ll === v2 ? "selected" : ""}>${l}</option>`).join("")}</select></label>
+    <div class="tp-more"><label class="field">Planned time<input type="time" data-f="at" value="${esc(it.at || "")}" list="st-${esc(it.eid)}"></label>${showtimeList(it)}
+      ${it.t === "ATTRACTION" ? `<label class="field">Alert me under (min)<input type="number" min="5" step="5" data-f="alertBelow" value="${it.alertBelow || ""}" placeholder="e.g. 30"></label>` : ""}
+      ${it.t === "ATTRACTION" ? `<label class="field">How you'll ride<select data-f="ll">${LLOPT.map(([v2, l]) => `<option value="${v2}" ${it.ll === v2 ? "selected" : ""}>${l}</option>`).join("")}</select></label>
       <label class="field">Return time<input type="time" data-f="llTime" value="${esc(it.llTime || "")}"></label>
       <label class="field">Min height (${heightUnit()})<input type="number" min="0" step="1" data-f="minH" value="${it.minH ? Math.round(useF() ? it.minH : it.minH * 2.54) : ""}" placeholder="${useF() ? "40" : "102"}"></label>` : ""}
-      <label class="field" style="grid-column:1/-1">Notes<input data-f="notes" maxlength="300" value="${esc(it.notes || "")}" placeholder="${it.t === "SHOW" ? "Showtime, where to stand…" : it.t === "RESTAURANT" ? "Reservation time, what to order…" : "Ride photo, best seat…"}"></label></div></li>`;
+      <label class="field" style="grid-column:1/-1">Notes<input data-f="notes" maxlength="300" value="${esc(it.notes || "")}" placeholder="${it.t === "SHOW" ? "Where to stand…" : it.t === "RESTAURANT" ? "Confirmation, what to order…" : it.t === "SNACK" ? "Where to get it…" : it.t === "CHARACTER" ? "Where they appear…" : "Ride photo, best seat…"}"></label></div></li>`;
+}
+// today's showtimes as suggestions for a show's planned time
+function showtimeList(it) {
+  if (it.t !== "SHOW") return "";
+  const l = Object.values(TPLIVE).map(x => x.data?.[it.eid]).find(Boolean), times = (l?.showtimes || []).map(x => hhmm(x.startTime)).filter(Boolean);
+  return times.length ? `<datalist id="st-${esc(it.eid)}">${times.map(t => `<option value="${t}">`).join("")}</datalist>` : "";
 }
 function liveRow(it, l) {
   if (!l) return `<div class="tl-row"><span>${esc(it.name)}</span><span class="hint">No live data</span></div>`;
@@ -3079,6 +3228,26 @@ const packPath = () => `users/${ME.uid}/packing/${cur.id}`;
 function packStats() { const g = T.packing?.groups || []; let total = 0, done = 0; g.forEach(x => (x.items || []).forEach(i => { total++; if (i.done) done++; })); return { total, done }; }
 function savePack(d = 400) { T.packing = { ...T.packing, empty: false, updated: Date.now() }; const { empty, ...data } = T.packing; save(packPath(), data, d); }
 const fromTemplate = (tpl, doneSet = new Set()) => Object.entries(tpl).map(([name, items]) => ({ id: uidGen(), name, items: items.map(t => ({ id: uidGen(), text: t, done: doneSet.has(name + "|" + t) })) }));
+// what the weather and destinations say you'll need (skips anything already on your list)
+function packSuggestions() {
+  const days = tripDays(), wx = days.map(wxFor).filter(Boolean), out = [];
+  const has = re => (T.packing?.groups || []).some(g => g.items.some(i => re.test(i.text)));
+  const add = (text, re, why) => { if (!has(re)) out.push({ text, why }); };
+  if (wx.length) {
+    const wet = wx.filter(w => (w.rain ?? 0) >= 40).length, lo = Math.min(...wx.map(w => w.lo)), hi = Math.max(...wx.map(w => w.hi));
+    if (wet) add("Umbrella or rain jacket", /umbrella|rain ?(jacket|coat)|poncho/i, `${wet} day${wet === 1 ? "" : "s"} look rainy`);
+    if (lo <= 5) add("Warm coat, hat and gloves", /coat|gloves|beanie|hat/i, `Lows near ${tDeg(lo)}`);
+    else if (lo <= 13) add("Warm layer for evenings", /layer|sweater|hoodie|fleece|jacket/i, `Lows around ${tDeg(lo)}`);
+    if (hi >= 27) add("Sunscreen, hat and sunglasses", /sunscreen|sunblock/i, `Highs up to ${tDeg(hi)}`);
+    if (hi >= 30) add("Refillable water bottle", /bottle/i, "Hot days");
+  }
+  if (CG) { const plugs = new Set(); tripCountries().forEach(c => c.plugs.split(",").map(x => x.trim()).filter(p => !["A", "B"].includes(p)).slice(0, 1).forEach(p => plugs.add(p)));
+    if (plugs.size) add(`Plug adapter (type ${[...plugs].join(", ")})`, /adapter/i, "For the countries on this trip");
+    if (tripCountries().some(c => c.v >= 200)) add("Check hair tools are dual voltage", /voltage|converter/i, "220–240V outlets"); }
+  if (parkDays().length) { add("Portable battery for park apps", /power ?bank|battery|charger/i, "Theme park days drain your phone"); add("Comfortable walking shoes", /shoes|sneakers/i, "Lots of walking"); }
+  if (tripCountries().length) add("Passport", /passport/i, "International trip");
+  return out;
+}
 function viewPacking(v) {
   const P = T.packing;
   if (!P) { v.innerHTML = `<p class="hint">Loading your packing list…</p>`; return; }
@@ -3101,8 +3270,11 @@ function viewPacking(v) {
     };
     return;
   }
-  const st = packStats();
-  v.innerHTML = `<div class="row between"><div><h2>Packing</h2><p class="hint">Only you can see your list. Everyone on the trip has their own.</p></div><span class="hint">${st.done} of ${st.total} packed</span></div>
+  const st = packStats(), sug = packSuggestions();
+  v.innerHTML = `${sug.length ? `<div class="card pk-sug"><div class="row between"><h3>Suggested for this trip</h3><button class="btn small" type="button" id="pkSugAll">Add all</button></div>
+      <p class="hint">From the forecast (or typical weather) and the countries you're visiting.</p>
+      <div class="chips">${sug.map((x, i) => `<button class="chip" type="button" data-sug="${i}" title="${esc(x.why)}">+ ${esc(x.text)}</button>`).join("")}</div></div>` : ""}
+    <div class="row between"><div><h2>Packing</h2><p class="hint">Only you can see your list. Everyone on the trip has their own.</p></div><span class="hint">${st.done} of ${st.total} packed</span></div>
     <div class="meter"><i style="width:${st.total ? st.done / st.total * 100 : 0}%;background:var(--leaf)"></i></div>
     <div class="row"><button class="btn ghost small" type="button" id="pkGroup">+ New section</button>${st.done ? `<button class="btn ghost small" type="button" id="pkReset" title="For packing up to go home">Uncheck everything</button>` : ""}</div>
     <div class="packs">${P.groups.map((g, gi) => { const n = g.items.filter(i => i.done).length; return `<div class="card pack" data-g="${gi}">
@@ -3122,6 +3294,10 @@ function viewPacking(v) {
     if (c && e.target.closest("[data-idel]")) { G(c.dataset.g).items.splice(+e.target.closest("li").dataset.i, 1); savePack(0); renderTrip(); }
     if (c && e.target.closest("[data-gdel]")) { const g = G(c.dataset.g); if (g.items.length && !armed.has(c.dataset.g)) { armed.add(c.dataset.g); e.target.textContent = "Delete?"; return; } T.packing.groups.splice(+c.dataset.g, 1); savePack(0); renderTrip(); } });
   v.addEventListener("submit", e => { const c = e.target.closest(".pack"); if (!c) return; e.preventDefault(); const inp = e.target.querySelector("input"), t = inp.value.trim(); if (!t) return; G(c.dataset.g).items.push({ id: uidGen(), text: t, done: false }); savePack(0); renderTrip(); setTimeout(() => $(`.pack[data-g="${c.dataset.g}"] .pk-add input`)?.focus(), 0); });
+  const addSug = list => { let g = T.packing.groups.find(g => g.name === "Suggested"); if (!g) { g = { id: uidGen(), name: "Suggested", items: [] }; T.packing.groups.unshift(g); }
+    list.forEach(x => g.items.push({ id: uidGen(), text: x.text, done: false })); savePack(0); renderTrip(); };
+  $$("[data-sug]", v).forEach(b => b.onclick = () => addSug([sug[+b.dataset.sug]]));
+  $("#pkSugAll") && ($("#pkSugAll").onclick = () => addSug(sug));
   $("#pkGroup").onclick = () => { T.packing.groups.push({ id: uidGen(), name: "New section", items: [] }); savePack(0); renderTrip(); const last = $$(".pack [data-gname]").pop(); last?.focus(); last?.select(); };
   if ($("#pkReset")) $("#pkReset").onclick = () => { T.packing.groups.forEach(g => g.items.forEach(i => i.done = false)); savePack(0); renderTrip(); };
 }
@@ -3243,6 +3419,48 @@ function viewNotes(v) {
 }
 
 // ================================================================ OVERVIEW
+// ================================================================ TIME ZONES & JET LAG
+const homeTz = () => { if (PROFILE.homeTz) return PROFILE.homeTz; let h = localStorage.getItem("home-tz"); if (!h) { h = Intl.DateTimeFormat().resolvedOptions().timeZone; try { localStorage.setItem("home-tz", h); } catch {} } return h; };
+const TZC = (() => { try { return JSON.parse(localStorage.getItem("trips-tz") || "{}"); } catch { return {}; } })();
+function tzOffset(tz, at = new Date()) {   // minutes ahead of UTC
+  try { const p = new Intl.DateTimeFormat("en-US", { timeZone: tz, hourCycle: "h23", year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).formatToParts(at), g = t => +p.find(x => x.type === t).value;
+    return Math.round((Date.UTC(g("year"), g("month") - 1, g("day"), g("hour") % 24, g("minute")) - Math.floor(at.getTime() / 60e3) * 60e3) / 60e3); } catch { return null; }
+}
+const clockIn = (tz, at = new Date()) => { try { return at.toLocaleTimeString("en-US", { timeZone: tz, hour: "numeric", minute: "2-digit" }); } catch { return ""; } };
+const dayIn = (tz, at = new Date()) => { try { return at.toLocaleDateString("en-US", { timeZone: tz, weekday: "short" }); } catch { return ""; } };
+// the destination's time zone: where the trip's first day is (or the first destination)
+function tripTzPoint(iso) { const d = iso && dayPoint(iso); if (d) return d; const t = tripDests(T.trip)[0]; return t?.lat != null ? t : null; }
+function tzAt(pt) {
+  if (!pt) return null; const k = `${pt.lat.toFixed(1)},${pt.lon.toFixed(1)}`;
+  if (TZC[k]) return TZC[k];
+  if (!tzAt.busy?.[k] && navigator.onLine) { (tzAt.busy ||= {})[k] = 1;
+    fetch(`https://api.open-meteo.com/v1/forecast?latitude=${pt.lat.toFixed(3)}&longitude=${pt.lon.toFixed(3)}&timezone=auto&forecast_days=1&daily=weather_code`).then(r => r.json()).then(j => { if (j.timezone) { TZC[k] = j.timezone; try { localStorage.setItem("trips-tz", JSON.stringify(TZC)); } catch {} if (cur && ["overview", "today"].includes(cur.tab)) renderTrip(true); } }).catch(() => {}); }
+  return null;
+}
+const tzName = tz => (tz || "").split("/").pop().replace(/_/g, " ");
+function tzDiff(tz, at) { const a = tzOffset(tz, at), b = tzOffset(homeTz(), at); return a == null || b == null ? null : a - b; }
+const hrs = m => { const h = Math.abs(m) / 60; return `${Number.isInteger(h) ? h : h.toFixed(1)} hour${h === 1 ? "" : "s"}`; };
+function tzLine(iso) {   // for Today: local time and home time
+  const tz = tzAt(tripTzPoint(iso)); if (!tz) return "";
+  const d = tzDiff(tz); if (!d) return "";
+  return `<div class="tz-line">🕒 <b>${clockIn(tz)}</b> in ${esc(tzName(tz))} · <span class="hint" style="display:inline">${clockIn(homeTz())} ${dayIn(homeTz()) !== dayIn(tz) ? dayIn(homeTz()) + " " : ""}at home</span></div>`;
+}
+function jetLagHtml() {
+  const days = tripDays(); if (!days.length) return "";
+  const tz = tzAt(tripTzPoint(days[0])); if (!tz) return "";
+  const at = new Date(days[0] + "T12:00"), raw = tzDiff(tz, at); if (raw == null || Math.abs(raw) < 120) return "";
+  let d = raw; if (d > 720) d -= 1440; if (d < -720) d += 1440;   // the shorter way round the clock
+  const east = d > 0, h = Math.round(Math.abs(d) / 60), pre = Math.min(3, Math.ceil(h / 2)), start = addDays(days[0], -pre);
+  return `<div class="card tz-card"><h3>🕒 Time zone & jet lag</h3>
+    <div class="tz-clocks"><div><span class="k">${esc(tzName(tz))}</span><b>${clockIn(tz)}</b><span class="hint">${dayIn(tz)}</span></div><div><span class="k">Home (${esc(tzName(homeTz()))})</span><b>${clockIn(homeTz())}</b><span class="hint">${dayIn(homeTz())}</span></div></div>
+    <p>${esc(tzName(tz))} is <b>${hrs(Math.abs(raw))} ${raw > 0 ? "ahead of" : "behind"}</b> home${Math.abs(raw) !== Math.abs(d) ? `. For your body clock that's like going ${hrs(Math.abs(d))} ${east ? "east" : "west"}` : ""}.</p>
+    <ul class="tz-plan">
+      ${isoOf(new Date()) < days[0] ? `<li><b>From ${esc(fmtD(start, { weekday: "short", month: "short", day: "numeric" }))}:</b> go to bed and wake up about an hour ${east ? "earlier" : "later"} each day for ${pre} day${pre === 1 ? "" : "s"}.</li>` : ""}
+      <li><b>On the plane:</b> set your watch to ${esc(tzName(tz))} time. Sleep if it's night there, stay awake if it's day.</li>
+      <li><b>When you land:</b> ${east ? "get outside in the morning light and avoid bright light late in the evening" : "get outside in the afternoon and evening light, and try to stay up until about 9pm local time"}. Eat meals at local times.</li>
+      <li><b>First day:</b> plan something easy. Most people adjust about a day for every ${east ? "hour" : "1 to 1.5 hours"} of difference.</li>
+    </ul></div>`;
+}
 function viewOverview(v) {
   const t = T.trip, days = tripDays(), all = placeList(), sched = all.filter(p => days.includes(p.day)).length;
   const items = Object.entries(T.checklist).sort((a, b) => (a[1].order || 0) - (b[1].order || 0));
@@ -3252,6 +3470,8 @@ function viewOverview(v) {
       <div class="stat"><span class="k">Places</span><span class="v">${all.length}</span><span class="s">${sched} scheduled</span></div>
       <div class="stat"><span class="k">Bookings</span><span class="v">${Object.keys(T.bookings).length}</span><span class="s">flights, stays & more</span></div>
       <div class="stat"><span class="k">Spent</span><span class="v">${money(spent)}</span><span class="s">${num(t.budget) ? "of " + money(num(t.budget)) : "no budget set"}</span></div></div>
+    ${comingUpHtml()}
+    ${jetLagHtml()}
     <div class="card" style="display:grid;gap:12px"><h3>Trip details</h3>
       <label class="field" for="ovName">Name<input id="ovName" maxlength="60" value="${esc(t.name || "")}" data-live></label>
       <div class="field"><label for="ovDest">Destinations</label><div class="dchips" id="ovChips"></div><div class="suggest-wrap"><input id="ovDest" autocomplete="off" placeholder="Add a country, region or city" role="combobox" aria-expanded="false" aria-controls="ovDestL"><ul class="suggest" id="ovDestL" role="listbox" hidden></ul></div></div>
@@ -3345,8 +3565,10 @@ function inviteModal() {
     <div style="display:grid;gap:6px" id="invList">${members().map(e => `<div class="bal">${avatar(e)}<span><b>${esc(nameOf(e))}</b> <span class="hint" style="display:inline">${esc(e)}</span></span>${isOwner() && e !== T.trip.ownerEmail ? `<button class="iconbtn del" type="button" data-rmm="${esc(e)}" aria-label="Remove ${esc(e)}">×</button>` : `<span class="hint">${e === T.trip.ownerEmail ? "Planner" : ""}</span>`}</div>`).join("")}</div>
     ${isOwner() ? `<form id="invForm" class="row" style="gap:6px"><input class="input grow" id="invEmail" type="email" placeholder="friend@gmail.com" required><button class="btn accent" type="submit">Invite</button></form>` : `<p class="hint">Only the planner (${esc(T.trip.ownerEmail || "")}) can add or remove people.</p>`}
     <p class="hint" id="invMsg"></p>
-    <div class="field"><span>Link to send them</span><div class="row" style="gap:6px"><input class="input grow" readonly value="${esc(link)}" id="invLink" aria-label="Trip link"><button class="btn ghost" type="button" id="invCopy">Copy</button></div></div>`, m => {
+    <div class="field"><span>Link to send them</span><div class="row" style="gap:6px"><input class="input grow" readonly value="${esc(link)}" id="invLink" aria-label="Trip link"><button class="btn ghost" type="button" id="invCopy">Copy</button></div></div>
+    ${shareSection()}`, m => {
     $$("[data-close]", m).forEach(b => b.onclick = closeModal);
+    wireShare(m);
     $("#invCopy").onclick = () => navigator.clipboard?.writeText(link).then(() => { $("#invMsg").textContent = "Link copied. Send it to them along with the invite."; }, () => { $("#invLink").select(); });
     const ref = doc(fs, "trips/" + cur.id);
     if ($("#invForm")) $("#invForm").onsubmit = async e => {
@@ -3358,6 +3580,127 @@ function inviteModal() {
     };
     $("#invList").addEventListener("click", async e => { const r = e.target.closest("[data-rmm]"); if (!r) return; await updateDoc(ref, { members: members().filter(x => x !== r.dataset.rmm) }).catch(fail); closeModal(); });
   });
+}
+
+// ================================================================ FAMILY LINK (read-only, no sign-in)
+// A snapshot of the plan goes to shares/{token}. Anyone with the link can view it; nothing else in the trip is reachable from it.
+const shareUrl = tok => location.href.split("#")[0] + "#/s/" + tok;
+function shareSnapshot() {
+  const t = T.trip, o = { bookings: true, ...(t.share?.opts || {}) }, days = tripDays();
+  const snap = { tid: cur.id, v: 1, name: t.name || "Trip", start: t.start || "", end: t.end || "", where: destLabel(t) || "", by: nameOf(t.ownerEmail || ""), cover: /^https:/.test(t.cover || "") ? t.cover : "",
+    days: days.map(iso => { const st = stayFor(iso);
+      return { iso, col: colVal(dayColor(iso, days.indexOf(iso))), stay: st ? st[1].title || "" : "", parks: (T.days[iso]?.parks || []).map(p => p.name),
+        items: dayItems(iso).map(x => x.k === "n" ? { n: 1, text: (x.text || "").slice(0, 300), time: x.time || "" } : { name: x.name, time: x.time || "", type: x.type, city: x.city || "", lat: x.lat ?? null, lon: x.lon ?? null }).filter(x => !x.n || x.text) }; }),
+    flights: [], stays: [], updated: Date.now() };
+  if (o.bookings) for (const b of Object.values(T.bookings)) {
+    if (b.kind === "flight") flightSegs(b).forEach(l => validIso(l.depDate) && snap.flights.push({ num: l.num || "", from: l.from || "", to: l.to || "", d: l.depDate, t: l.depTime || "", ad: l.arrDate || "", at: l.arrTime || "" }));
+    else if ((KINDS[b.kind] || KINDS.other).group === "lodging" && validIso(b.checkIn)) snap.stays.push({ name: b.title || "Stay", addr: b.addr || "", in: b.checkIn, out: b.checkOut || "" });
+  }
+  snap.flights.sort((a, b) => (a.d + a.t).localeCompare(b.d + b.t)); snap.stays.sort((a, b) => a.in.localeCompare(b.in));
+  return snap;
+}
+let shareLast = "";
+const pushShare = debounce(() => {
+  const sh = T.trip?.share; if (!cur || !sh?.on || !sh.token || !ME || !members().includes(ME.email)) return;
+  const snap = shareSnapshot(), { updated, ...cmp } = snap, sig = JSON.stringify(cmp);
+  if (sig === shareLast) return; shareLast = sig;
+  setDoc(doc(fs, "shares/" + sh.token), snap).catch(e => { if (e.code === "permission-denied") shareLast = ""; });
+}, 4000);
+function shareSection() {
+  const sh = T.trip.share || {}, on = !!(sh.on && sh.token);
+  return `<div class="card share-box"><div class="row between"><div><b>Family link</b><p class="hint">A view-only page of the day-by-day plan${(sh.opts?.bookings ?? true) ? ", flights and where you're staying" : ""}. No sign-in needed. Costs, confirmation numbers, notes pages and photos aren't included.</p></div>
+      <label class="switch"><input type="checkbox" id="shOn" ${on ? "checked" : ""}><span>${on ? "On" : "Off"}</span></label></div>
+    ${on ? `<div class="row" style="gap:6px"><input class="input grow" readonly value="${esc(shareUrl(sh.token))}" id="shLink" aria-label="Family link"><button class="btn ghost" type="button" id="shCopy">Copy</button></div>
+      <label class="row" style="gap:6px"><input type="checkbox" id="shBk" ${(sh.opts?.bookings ?? true) ? "checked" : ""}> <span class="hint" style="display:inline">Include flights and stays</span></label>
+      <p class="hint">It updates whenever someone on the trip has it open. Turning it off deletes the page, and turning it back on makes a new link.</p>` : ""}
+    <p class="hint" id="shMsg" role="status"></p></div>`;
+}
+function wireShare(m) {
+  const ref = doc(fs, "trips/" + cur.id);
+  $("#shOn", m).onchange = async e => {
+    const sh = T.trip.share || {};
+    try {
+      if (e.target.checked) { const token = (crypto.randomUUID?.() || uidGen() + uidGen() + uidGen()).replace(/-/g, "");
+        T.trip.share = { token, on: true, opts: sh.opts || { bookings: true } }; shareLast = "";
+        await setDoc(doc(fs, "shares/" + token), shareSnapshot()); await updateDoc(ref, { share: T.trip.share }); }
+      else { if (sh.token) await deleteDoc(doc(fs, "shares/" + sh.token)).catch(() => {}); T.trip.share = { on: false }; await updateDoc(ref, { share: { on: false } }); }
+      inviteModal();
+    } catch (err) { e.target.checked = !e.target.checked; $("#shMsg").textContent = err.code === "permission-denied" ? "The database rules need the family link section added (see the setup notes)." : "Couldn't save. Check your connection."; }
+  };
+  $("#shCopy", m) && ($("#shCopy", m).onclick = () => navigator.clipboard?.writeText($("#shLink").value).then(() => { $("#shMsg").textContent = "Copied. Send it to family or friends."; }, () => $("#shLink").select()));
+  $("#shBk", m) && ($("#shBk", m).onchange = async e => { T.trip.share = { ...T.trip.share, opts: { ...(T.trip.share.opts || {}), bookings: e.target.checked } }; shareLast = ""; await updateDoc(ref, { share: T.trip.share }).catch(fail); pushShare(); });
+}
+async function renderShare(token) {
+  $("#crumb").textContent = ""; $("#meBtn").hidden = !ME; $("#backBtn").hidden = true; $("#layoutSeg").hidden = true;
+  $("#app").innerHTML = `<div class="share-page"><p class="hint">Loading…</p></div>`;
+  let d; try { const s = await getDoc(doc(fs, "shares/" + token)); d = s.exists() ? s.data() : null; } catch { d = undefined; }
+  const box = $(".share-page"); if (!box) return;
+  if (!d) { box.innerHTML = `<div class="card"><h2>${d === null ? "This link isn't active" : "Couldn't load this trip"}</h2><p class="hint">${d === null ? "The planner may have turned the family link off. Ask them for a new one." : "Check your connection and try again."}</p></div>`; return; }
+  const today = isoOf(new Date()), fl = d.flights || [], st = d.stays || [];
+  const t12 = t => t ? fmt12(t) : "";
+  box.innerHTML = `<header class="share-hero">${d.cover ? `<img src="${esc(d.cover)}" alt="">` : ""}<div><h1>${esc(d.name)}</h1><span>${validIso(d.start) ? esc(`${fmtD(d.start, { month: "short", day: "numeric" })} – ${fmtD(d.end, { month: "short", day: "numeric", year: "numeric" })}`) : ""}${d.where ? " · " + esc(d.where) : ""}</span>${d.by ? `<span class="hint">Planned by ${esc(d.by)} · updated ${esc(new Date(d.updated).toLocaleDateString("en-US", { month: "short", day: "numeric" }))}</span>` : ""}</div></header>
+    ${fl.length ? `<section class="card"><h3>✈ Flights</h3>${fl.map(f => `<div class="sh-row"><b>${esc(fmtD(f.d, { weekday: "short", month: "short", day: "numeric" }))}</b><span>${esc(f.num)} ${esc(f.from)} ${t12(f.t)} → ${esc(f.to)} ${t12(f.at)}${f.ad && f.ad !== f.d ? " (+" + daysBetween(f.d, f.ad) + ")" : ""}</span>${f.num ? `<a class="ext" href="https://www.flightaware.com/live/flight/${encodeURIComponent(f.num.replace(/\s/g, ""))}" target="_blank" rel="noopener">Track ↗</a>` : ""}</div>`).join("")}</section>` : ""}
+    ${st.length ? `<section class="card"><h3>🛏 Where we're staying</h3>${st.map(x => `<div class="sh-row"><b>${esc(fmtD(x.in, { month: "short", day: "numeric" }))}${x.out ? "–" + esc(fmtD(x.out, { month: "short", day: "numeric" })) : ""}</b><span>${esc(x.name)}${x.addr ? `<span class="hint">${esc(x.addr)}</span>` : ""}</span></div>`).join("")}</section>` : ""}
+    ${(d.days || []).map((dy, i) => `<section class="card sh-day ${dy.iso === today ? "is-today" : ""}" id="sd-${dy.iso}"><div class="row between"><h3><span class="sh-n" style="background:${esc(dy.col || "#888")}">${i + 1}</span>${dy.iso === today ? "Today · " : ""}${esc(fmtD(dy.iso, { weekday: "long", month: "short", day: "numeric" }))}</h3>${dy.stay ? `<span class="hint">🛏 ${esc(dy.stay)}</span>` : ""}</div>
+      ${dy.parks?.length ? `<p class="hint">🎢 ${esc(dy.parks.join(" + "))}</p>` : ""}
+      ${dy.items?.length ? `<ol class="sh-items">${dy.items.map(x => x.n ? `<li class="sh-note">${x.time ? `<b>${esc(t12(x.time))}</b> ` : ""}${esc(x.text).replace(/\n/g, "<br>")}</li>` : `<li><span class="tl-time">${esc(t12(x.time))}</span><span><b>${esc(x.name)}</b>${x.city && x.city !== x.name ? `<span class="hint">${esc(x.city)}</span>` : ""}</span>${x.lat != null ? `<a class="ext" href="https://maps.apple.com/?ll=${x.lat},${x.lon}&q=${encodeURIComponent(x.name)}" target="_blank" rel="noopener">Map ↗</a>` : ""}</li>`).join("")}</ol>` : `<p class="hint">Free day.</p>`}</section>`).join("")}
+    <p class="hint" style="text-align:center">Made with Wayfinder. This page is view-only.</p>`;
+  document.title = d.name + " · Wayfinder";
+  const td = document.getElementById("sd-" + today); if (td) td.scrollIntoView({ block: "start" });
+}
+
+// ================================================================ SHARED PHOTO ALBUM
+const AL = { day: "", who: "" };
+function viewAlbum(v) {
+  const days = tripDays(), all = Object.entries(T.photos).map(([id, p]) => ({ id, ...p })).sort((a, b) => (a.day || "9").localeCompare(b.day || "9") || (a.created || 0) - (b.created || 0));
+  const whos = [...new Set(all.map(p => p.by).filter(Boolean))];
+  const list = all.filter(p => (!AL.day || p.day === AL.day) && (!AL.who || p.by === AL.who));
+  const groups = {}; list.forEach(p => (groups[p.day || ""] ||= []).push(p));
+  v.innerHTML = `<div class="row between"><div><h2>Photos</h2><p class="hint">Everyone on the trip can add photos and see them here. They also go into the memory book.</p></div>
+      <label class="btn accent file-btn">Add photos<input type="file" id="alFile" accept="image/*" multiple></label></div>
+    <div class="row" style="gap:8px;flex-wrap:wrap"><label class="field" style="flex:1 1 180px">Add to<select id="alDay"><option value="">No day</option>${days.map((iso, i) => `<option value="${iso}" ${iso === (AL.addDay ?? (days.includes(isoOf(new Date())) ? isoOf(new Date()) : "")) ? "selected" : ""}>Day ${i + 1} · ${esc(fmtD(iso, { weekday: "short", month: "short", day: "numeric" }))}</option>`).join("")}</select></label>
+      <label class="field" style="flex:1 1 160px">Show<select id="alF"><option value="">All days</option>${days.map((iso, i) => `<option value="${iso}" ${AL.day === iso ? "selected" : ""}>Day ${i + 1}</option>`).join("")}</select></label>
+      ${whos.length > 1 ? `<label class="field" style="flex:1 1 160px">From<select id="alW"><option value="">Everyone</option>${whos.map(e => `<option value="${esc(e)}" ${AL.who === e ? "selected" : ""}>${esc(nameOf(e))}</option>`).join("")}</select></label>` : ""}</div>
+    <p class="hint" id="alMsg" role="status"></p>
+    ${list.length ? Object.entries(groups).map(([iso, ps]) => `<section class="al-day"><h3>${iso ? `Day ${days.indexOf(iso) + 1} · ${esc(fmtD(iso, { weekday: "long", month: "short", day: "numeric" }))}` : "Other photos"}</h3>
+      <div class="al-grid">${ps.map(p => `<figure class="al-ph"><img src="${esc(p.data)}" alt="${esc(p.cap || "Trip photo")}" data-alopen="${p.id}" loading="lazy">${p.by ? `<span class="al-by">${avatar(p.by)}</span>` : ""}${p.cap ? `<figcaption>${esc(p.cap)}</figcaption>` : ""}</figure>`).join("")}</div></section>`).join("")
+      : `<div class="empty">${all.length ? "No photos match." : "No photos yet. Add some from your phone, during the trip or after."}</div>`}`;
+  $("#alDay").onchange = e => { AL.addDay = e.target.value; };
+  $("#alF").onchange = e => { AL.day = e.target.value; renderTrip(); };
+  $("#alW") && ($("#alW").onchange = e => { AL.who = e.target.value; renderTrip(); });
+  $("#alFile").onchange = async e => {
+    const files = [...e.target.files].filter(f => f.type.startsWith("image/")); e.target.value = ""; if (!files.length) return;
+    const day = $("#alDay").value, tid = cur.id; let ok = 0;
+    for (let i = 0; i < files.length; i++) {
+      $("#alMsg").textContent = `Uploading ${i + 1} of ${files.length}…`;
+      try { const data = await shrink(files[i], 1400, 300000), id = uidGen();
+        await setDoc(doc(fs, `trips/${tid}/photos/${id}`), { day, data, by: ME.email, created: Date.now(), cap: "" }); ok++; }
+      catch (err) { console.warn(err); }
+    }
+    $("#alMsg").textContent = ok === files.length ? `Added ${ok} photo${ok === 1 ? "" : "s"}.` : `Added ${ok} of ${files.length}. Some couldn't be uploaded.`;
+  };
+  v.onclick = e => { const im = e.target.closest("[data-alopen]"); if (im) albumLightbox(list, im.dataset.alopen); };
+}
+function albumLightbox(list, id) {
+  let k = list.findIndex(p => p.id === id); if (k < 0) return;
+  const lb = document.createElement("div"); lb.className = "lightbox al-lb"; document.body.append(lb);
+  const close = () => { lb.remove(); document.removeEventListener("keydown", key); };
+  const paint = () => { const p = list[k], mine = p.by === ME.email || isOwner();
+    lb.innerHTML = `<img src="${esc(p.data)}" alt="${esc(p.cap || "Trip photo")}"><div class="al-bar" data-bar>
+      <button class="iconbtn" type="button" data-nav="-1" ${k ? "" : "disabled"} aria-label="Previous">‹</button>
+      <span class="grow">${mine ? `<input class="input" id="alCap" maxlength="120" placeholder="Add a caption" value="${esc(p.cap || "")}" aria-label="Caption">` : `<span>${esc(p.cap || "")}</span>`}<span class="hint">${p.by ? esc(nameOf(p.by)) : ""}${p.day ? " · " + esc(fmtD(p.day, { month: "short", day: "numeric" })) : ""}</span></span>
+      ${mine ? `<button class="btn ghost small" type="button" data-aldel>Delete</button>` : ""}<a class="btn ghost small" href="${esc(p.data)}" download="photo-${esc(p.day || "trip")}.jpg">Save</a>
+      <button class="iconbtn" type="button" data-nav="1" ${k < list.length - 1 ? "" : "disabled"} aria-label="Next">›</button><button class="iconbtn" type="button" data-x aria-label="Close">×</button></div>`;
+    const cap = lb.querySelector("#alCap"); if (cap) cap.onchange = () => updateDoc(doc(fs, `trips/${cur.id}/photos/${p.id}`), { cap: cap.value.trim().slice(0, 120) }).then(() => { p.cap = cap.value.trim(); }).catch(fail);
+  };
+  let armed = false;
+  lb.onclick = e => {
+    if (e.target.closest("[data-x]") || e.target === lb) return close();
+    const n = e.target.closest("[data-nav]"); if (n) { k = Math.max(0, Math.min(list.length - 1, k + +n.dataset.nav)); armed = false; return paint(); }
+    const d = e.target.closest("[data-aldel]"); if (d) { if (!armed) { armed = true; d.textContent = "Tap again to delete"; return; } deleteDoc(doc(fs, `trips/${cur.id}/photos/${list[k].id}`)).catch(fail); list.splice(k, 1); if (!list.length) return close(); k = Math.min(k, list.length - 1); armed = false; paint(); }
+  };
+  const key = e => { if (e.target.tagName === "INPUT") return; if (e.key === "Escape") close(); if (e.key === "ArrowLeft" && k) { k--; paint(); } if (e.key === "ArrowRight" && k < list.length - 1) { k++; paint(); } };
+  document.addEventListener("keydown", key); paint();
 }
 
 // ================================================================ MAP (Leaflet + OpenStreetMap/CARTO tiles)
