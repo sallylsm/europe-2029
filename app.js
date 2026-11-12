@@ -645,7 +645,7 @@ function openTrip(id, tab) {
   $("#app").innerHTML = `<div class="trip layout-${layout}"><aside class="side" id="side" aria-label="Trip sections"></aside><div class="panel" id="panel"><div class="view"><p class="hint">Loading trip…</p></div></div><div class="mapwrap"><div id="map"></div><div class="map-days" id="mapDays" hidden></div></div></div><button class="btn accent mapbtn" id="mapToggle" type="button">Map</button>`;
   $("#mapToggle").onclick = () => { document.body.classList.toggle("show-map"); $("#mapToggle").textContent = document.body.classList.contains("show-map") ? "List" : "Map"; map?.invalidateSize(); };
   initMap();
-  const rerender = debounce(() => { if (cur?.id === id) { renderTrip(true); renderMap(); } }, 60);
+  const rerender = debounce(() => { if (cur?.id === id) { renderTrip(true); renderMap("data"); } }, 60);
   cur.unsubs.push(onSnapshot(doc(fs, "trips/" + id), s => {
     if (!s.exists()) { $("#panel").innerHTML = `<div class="view"><p class="banner">This trip doesn't exist anymore, or you're no longer a member.</p><a href="#/">Back to your trips</a></div>`; return; }
     T.trip = { ...s.data() };
@@ -1962,7 +1962,9 @@ const HELP = [
     <p><b>Duplicate trip</b> (bottom of Overview) copies a trip as a starting point for the next one, with the dates moved.</p>`],
   ["parks", "Theme parks", `<p>On any itinerary day, tap <b>🎢 Theme park</b> and pick the park (Disneyland, California Adventure, Universal, Tokyo Disney and 70+ more). The <b>Theme parks</b> tab then has:</p>
     <ul><li><b>Park hours</b> for your date, including early entry and special ticketed events (posted about 1–2 months ahead).</li>
-    <li><b>Your plan</b>: pick rides, shows and food, star your <b>must-dos</b>, note Lightning Lane plans and return times, and drag to reorder. <b>Suggested order</b> puts must-dos first for when the gates open, then goes the shortest way around. The map shows the route.</li>
+    <li><b>Park map</b>: every ride, show and restaurant appears on the map (purple rides, orange shows, green food). Tap one to see its wait and add it to your plan. Your plan shows as a numbered route. On a phone, tap <b>🗺 Park map</b>.</li>
+    <li><b>Your plan</b>: pick rides, shows and food, star your <b>must-dos</b>, note Lightning Lane plans and return times, and drag to reorder. Each stop shows a rough time (≈ 10:15am) based on opening time, walking and typical waits.</li>
+    <li><b>Best order</b>: <i>Rope drop</i> puts must-dos first while lines are short, <i>Shortest walk</i> avoids zigzagging, and on the day, <i>Shortest waits right now</i> re-plans using live waits.</li>
     <li><b>Who's riding</b>: add everyone's height, and rides with a minimum height flag anyone too short.</li>
     <li><b>Live wait times</b> on the day, shortest first, refreshing every 5 minutes, with single rider, Lightning Lane return times and showtimes. Today shows them too, and rides you check off go into the memory book.</li></ul>
     <p>Park data comes from ThemeParks.wiki. Book Lightning Lanes in the official park app.</p>`],
@@ -2691,8 +2693,78 @@ function suggestOrder(items) {
   return [...a, ...b, ...done];
 }
 
+// ---- ride order: rope drop, shortest walk, or shortest waits right now
+const walkMin = (a, b) => a && b && a.lat != null && b.lat != null ? Math.round(km(a, b) / 4.5 * 60 * 1.3) : 4;   // paths wind, so ×1.3
+const DEF_WAIT = { ATTRACTION: 35, SHOW: 25, RESTAURANT: 45 }, RIDE_LEN = { ATTRACTION: 8, SHOW: 25, RESTAURANT: 0 };
+const liveWait = (pid, it) => { const l = TPLIVE[pid]?.data?.[it.eid]; return l?.status === "OPERATING" ? (l.queue?.STANDBY?.waitTime ?? null) : l && l.status && l.status !== "OPERATING" ? Infinity : null; };
+function orderBy(items, how, pid) {
+  if (how === "rope") return suggestOrder(items);
+  // shows and meals run on their own schedule, so they go after the rides; you can drag them into place
+  const done = items.filter(i => i.done), todo = items.filter(i => !i.done && (how !== "waits" || i.t === "ATTRACTION")), later = how === "waits" ? items.filter(i => !i.done && i.t !== "ATTRACTION") : [];
+  const out = []; let at = [...done].reverse().find(i => i.lat != null) || null, left = todo.slice();
+  while (left.length) {
+    const cost = i => walkMin(at, i) + (how === "waits" ? (() => { const w = liveWait(pid, i); return w === Infinity ? 1e4 : (w ?? DEF_WAIT[i.t] ?? 30); })() : 0) - (i.must ? (how === "waits" ? 25 : 3) : 0);
+    left.sort((a, b) => cost(a) - cost(b)); const n = left.shift(); out.push(n); if (n.lat != null) at = n;
+  }
+  return [...done, ...out, ...later];
+}
+function orderModal(iso, pid) {
+  const pk = parkOf(iso, pid), open = Object.values(TPLIVE[pid]?.data || {}).some(l => l.status === "OPERATING");
+  const opt = (k, t, d, dis) => `<button type="button" class="order-opt" data-how="${k}" ${dis ? "disabled" : ""}><b>${t}</b><span>${d}</span></button>`;
+  openModal(`<div class="row between"><h2>Best order</h2><button class="iconbtn" type="button" data-close aria-label="Close">×</button></div>
+    <p class="hint">Reorders the rides you haven't done yet at ${esc(pk.name)}. You can still drag things around afterwards.</p>
+    <div class="order-opts">${opt("rope", "🌅 Rope drop", "Must-dos first while lines are short at opening, then the shortest walk for the rest. Best for planning ahead.")}
+      ${opt("walk", "🚶 Shortest walk", "The least walking from ride to ride, so you don't zigzag across the park.")}
+      ${opt("waits", "⏱️ Shortest waits right now", open ? "Uses live wait times: picks the next ride that saves the most time between walking and waiting. Must-dos get priority, and rides that are down go last." : "Available while the park is open. Use it on the day to re-plan as lines change.", !open)}</div>`, m => {
+    $$("[data-close]", m).forEach(x => x.onclick = closeModal);
+    m.querySelector(".order-opts").onclick = e => { const b = e.target.closest("[data-how]"); if (!b) return;
+      updPark(iso, pid, p => { p.items = orderBy(p.items, b.dataset.how, pid); return p; }); closeModal(); renderTrip(); renderMap(); toast(b.dataset.how === "waits" ? "Re-planned around the current waits." : "Reordered."); };
+  });
+}
+// rough timeline: start at opening (or now, on the day), add walking + waiting + ride time
+const PKOPEN = {};
+function estTimes(iso, pid, items) {
+  const isToday = iso === isoOf(new Date()), nowM = new Date().getHours() * 60 + new Date().getMinutes();
+  const o = PKOPEN[pid + iso]; let t = o != null ? o : 9 * 60;
+  if (isToday && nowM > t) t = nowM;
+  const out = {}; let at = null;
+  for (const it of items) {
+    if (it.done) { if (it.lat != null) at = it; continue; }
+    t += walkMin(at, it);
+    if (it.ll && /^\d\d:\d\d$/.test(it.llTime || "")) { const r = +it.llTime.slice(0, 2) * 60 + +it.llTime.slice(3); t = Math.max(t, r) + 10; }
+    else { const w = isToday ? liveWait(pid, it) : null; t += w == null || w === Infinity ? DEF_WAIT[it.t] ?? 30 : w; }
+    out[it.eid] = t; t += RIDE_LEN[it.t] ?? 8; if (it.lat != null) at = it;
+  }
+  return { at: out, end: t };
+}
+const mm12 = m => fmt12(`${String(Math.floor(m / 60) % 24).padStart(2, "0")}:${String(Math.round(m % 60)).padStart(2, "0")}`);
+// ---- the park on the map: every ride and show, with yours numbered
+let mapCat = { pid: null, items: null };
+function parkMapLayer(pts, add) {
+  const { iso, pid } = parkSel, pk = parkOf(iso, pid); if (!pk) return;
+  if (mapCat.pid !== pid) { mapCat = { pid, items: null }; tpCatalog(pid).then(c => { if (mapCat.pid === pid) { mapCat.items = c; fitPending = true; renderMap(); } }).catch(() => {}); }
+  const planned = new Map(pk.items.map((i, k) => [i.eid, k])), col = colVal(dayColor(iso, tripDays().indexOf(iso)));
+  const TC = { ATTRACTION: "#7646B3", SHOW: "#E08A1E", RESTAURANT: "#2E9E78" };
+  const live = TPLIVE[pid]?.data || {};
+  const popup = c => { const l = live[c.id], w = l?.status === "OPERATING" ? (l.queue?.STANDBY?.waitTime != null ? `${l.queue.STANDBY.waitTime} min wait now` : "Open now") : l?.status ? l.status.toLowerCase() : "";
+    return `<b>${TPT[c.t][0]} ${esc(c.name)}</b>${w ? `<br><span style="color:var(--muted)">${esc(w)}</span>` : ""}<br><button class="btn small ${planned.has(c.id) ? "ghost" : "accent"}" type="button" data-mapadd="${esc(c.id)}" style="margin-top:6px">${planned.has(c.id) ? "Remove from plan" : "+ Add to plan"}</button>`; };
+  (mapCat.items || []).filter(c => c.lat != null && !planned.has(c.id)).forEach(c => L.circleMarker([c.lat, c.lon], { radius: 5, color: "#fff", weight: 1.5, fillColor: TC[c.t], fillOpacity: .85 }).addTo(layer).bindPopup(popup(c)).bindTooltip(c.name, { direction: "top", offset: [0, -4] }));
+  const its = pk.items.filter(i => i.lat != null && !i.done);
+  if (its.length > 1) L.polyline(its.map(i => [i.lat, i.lon]), { color: col, weight: 3, opacity: .75, dashArray: "5 6" }).addTo(layer);
+  pk.items.filter(i => i.lat != null).forEach(it => add(it.lat, it.lon, icon(it.done ? "✓" : String(its.indexOf(it) + 1), "num", it.done ? "#8a96a3" : it.must ? "#C9A227" : col, 24), popup({ id: it.eid, name: it.name, t: it.t })));
+  const bounds = its.length ? its : (mapCat.items || []).filter(c => c.lat != null);
+  bounds.forEach(c => pts.push([c.lat, c.lon]));
+  if (!bounds.length && pk.lat != null) pts.push([pk.lat, pk.lon]);
+}
+document.addEventListener("click", e => {
+  const b = e.target.closest("[data-mapadd]"); if (!b || !parkSel) return;
+  const { iso, pid } = parkSel, id = b.dataset.mapadd, c = (mapCat.items || []).find(x => x.id === id);
+  updPark(iso, pid, p => { if (p.items.some(i => i.eid === id)) p.items = p.items.filter(i => i.eid !== id); else if (c) p.items.push({ eid: c.id, name: c.name, t: c.t, lat: c.lat, lon: c.lon, must: false, ll: "", llTime: "", minH: 0, done: false, notes: "" }); return p; });
+  map?.closePopup(); renderTrip(); renderMap();
+});
+
 // ---- the Theme parks tab
-let parkSel = null, parkTimer = 0;
+let parkSel = null, parkTimer = 0; const liveShown = {};
 function viewParks(v) {
   const days = parkDays();
   clearInterval(parkTimer);
@@ -2701,16 +2773,17 @@ function viewParks(v) {
   if (!parkSel || !parkOf(parkSel.iso, parkSel.pid)) { const t = isoOf(new Date()); parkSel = (all.find(x => x.iso === t) || all[0]); parkSel = { iso: parkSel.iso, pid: parkSel.p.pid }; }
   const { iso, pid } = parkSel, pk = parkOf(iso, pid), items = pk.items || [], party = T.trip.party || [];
   const isToday = iso === isoOf(new Date());
-  v.innerHTML = `<div class="row between"><h2>Theme parks</h2><button class="btn ghost small" type="button" data-addpark="${iso}">+ Add a park</button></div>
+  v.innerHTML = `<div class="row between"><h2>Theme parks</h2><span class="row" style="gap:6px"><button class="btn ghost small map-only" type="button" id="tpMap">🗺 Park map</button><button class="btn ghost small" type="button" data-addpark="${iso}">+ Add a park</button></span></div>
     <div class="chips tp-days">${all.map(x => `<button type="button" class="chip ${x.iso === iso && x.p.pid === pid ? "on" : ""}" data-psel="${x.iso}|${esc(x.p.pid)}">${esc(fmtD(x.iso, { weekday: "short", month: "short", day: "numeric" }))} · ${esc(x.p.name)}</button>`).join("")}</div>
     <div class="card tp-head"><div class="row between"><div><h2>${esc(pk.name)}</h2><span class="hint">${esc(pk.dest || "")} · ${esc(dayLabel(iso))}</span></div><button class="iconbtn del" type="button" data-rmpark aria-label="Remove this park from the day">×</button></div>
-      <div id="tpHours" class="tp-hours"><span class="hint">Loading park hours…</span></div></div>
+      <div id="tpHours" class="tp-hours"><span class="hint">Loading park hours…</span></div>
+      <p class="hint" style="margin:8px 0 0">Tap any ride on the map to add it. <a class="ext" href="https://www.google.com/search?q=${encodeURIComponent(pk.name + " official park map")}" target="_blank" rel="noopener">Official park map ↗</a></p></div>
     <div class="card"><div class="row between"><h3>Who's riding</h3><button class="linkbtn" type="button" id="partyEdit">${party.length ? "Edit" : "Add heights"}</button></div>
       ${party.length ? `<div class="party">${party.map(x => `<span class="pill">${esc(x.name)}${x.h ? " · " + showH(x.h) : ""}</span>`).join("")}</div>` : `<p class="hint">Add everyone's height and rides with a minimum height will flag anyone too short.</p>`}</div>
     <div class="card"><div class="row between"><h3>Plan <span class="hint" style="display:inline">${items.filter(i => i.done).length}/${items.length} done</span></h3>
-      <span class="row" style="gap:6px"><button class="btn ghost small" type="button" id="tpOrder" ${items.length > 1 ? "" : "disabled"}>Suggested order</button><button class="btn small" type="button" id="tpAdd">+ Rides, shows & food</button></span></div>
-      ${items.length ? `<ol class="tp-items" id="tpItems">${items.map((it, k) => tpItemHtml(it, k, party)).join("")}</ol>
-        <p class="hint">⭐ marks a must-do. <b>Suggested order</b> puts must-dos first for when the gates open, then goes the shortest way around. Drag to change it.</p>`
+      <span class="row" style="gap:6px"><button class="btn ghost small" type="button" id="tpOrder" ${items.length > 1 ? "" : "disabled"}>Best order…</button><button class="btn small" type="button" id="tpAdd">+ Rides, shows & food</button></span></div>
+      ${items.length ? `<ol class="tp-items" id="tpItems">${(() => { const est = estTimes(iso, pid, items); return items.map((it, k) => tpItemHtml(it, k, party, est.at[it.eid])).join("") + (items.some(i => !i.done) ? `<li class="tp-end hint">Done around <b>${mm12(est.end)}</b>${PKOPEN[pid + iso] == null ? " (assuming a 9am start)" : ""}</li>` : ""); })()}</ol>
+        <p class="hint">⭐ marks a must-do. Times are rough estimates from opening, counting walking and typical waits${isToday ? " (live waits today)" : ""}. <b>Best order</b> plans it for you, or drag to change it.</p>`
       : `<p class="hint">Pick the rides, shows and places to eat you're thinking about, then star your must-dos.</p>`}</div>
     <div class="card"><div class="row between"><h3>${isToday ? "Live wait times" : "Wait times right now"}</h3><button class="linkbtn" type="button" id="tpRefresh">Refresh</button></div>
       ${isToday ? "" : `<p class="hint">These are today's live waits at ${esc(pk.name)}, handy for getting a feel for it. On your park day, they're your real waits.</p>`}
@@ -2720,6 +2793,7 @@ function viewParks(v) {
   tpSchedule(pid, iso).then(sch => {
     const el = $("#tpHours"); if (!el || parkSel?.iso !== iso) return;
     const day = sch.filter(x => x.date === iso);
+    const op = day.find(x => x.type === "OPERATING"); if (op && PKOPEN[pid + iso] == null) { const h = hhmm(op.openingTime); PKOPEN[pid + iso] = +h.slice(0, 2) * 60 + +h.slice(3); renderTrip(true); }
     if (!day.length) { el.innerHTML = `<span class="hint">Hours aren't posted yet. Parks usually publish them 1–2 months ahead.</span>`; return; }
     const lab = { OPERATING: "Park hours", EXTRA_HOURS: "Early entry / extra hours", TICKETED_EVENT: "Special ticketed event", PRIVATE_EVENT: "Private event", INFO: "Note" };
     el.innerHTML = day.sort((a, b) => (a.type === "OPERATING" ? -1 : 0) - (b.type === "OPERATING" ? -1 : 0)).map(x => `<div class="tp-hr ${x.type === "OPERATING" ? "main" : ""}"><span>${lab[x.type] || x.type}${x.description ? ` · ${esc(x.description)}` : ""}</span><b>${fmt12(hhmm(x.openingTime))} – ${fmt12(hhmm(x.closingTime))}</b></div>`).join("")
@@ -2730,6 +2804,8 @@ function viewParks(v) {
     const el = $("#tpLive"); if (!el) return;
     let data; try { data = await tpLive(pid, force); } catch { el.innerHTML = `<span class="hint">Couldn't reach live wait times right now.</span>`; return; }
     if (parkSel?.pid !== pid || !$("#tpLive")) return;
+    // new live data: refresh time estimates and the map's wait times (once per update)
+    if (liveShown[pid] !== TPLIVE[pid].at) { liveShown[pid] = TPLIVE[pid].at; if (isToday) setTimeout(() => renderTrip(true), 0); renderMap(); }
     const mine = items.length ? items.filter(i => !i.done) : [];
     const rows = (mine.length ? mine.map(i => ({ i, l: data[i.eid] })) : Object.values(data).filter(l => l.entityType === "ATTRACTION").map(l => ({ i: { name: l.name, eid: l.id, t: "ATTRACTION" }, l })))
       .filter(r => r.i.t !== "RESTAURANT" || r.l?.queue);
@@ -2750,7 +2826,8 @@ function viewParks(v) {
     if (t.closest("#tpAdd")) return parkItemsModal(iso, pid);
     if (t.closest("#tpRefresh")) return paintLive(true);
     if (t.closest("#partyEdit")) return partyModal();
-    if (t.closest("#tpOrder")) { updPark(iso, pid, p => { p.items = suggestOrder(p.items); return p; }); renderTrip(); renderMap(); toast("Ordered: must-dos first, then the shortest walk."); return; }
+    if (t.closest("#tpOrder")) return orderModal(iso, pid);
+    if (t.closest("#tpMap")) { document.body.classList.add("show-map"); $("#mapToggle").textContent = "List"; fitPending = true; setTimeout(() => { map?.invalidateSize(); renderMap(); }, 50); return; }
     if (t.closest("[data-rmpark]")) { if (!confirmTap(t.closest("[data-rmpark]"))) return; T.days[iso] = { ...T.days[iso], parks: T.days[iso].parks.filter(p => p.pid !== pid) }; saveDay(iso, 0); parkSel = null; renderTrip(); return; }
     const li = t.closest("[data-eid]"); if (!li) return; const eid = li.dataset.eid;
     if (t.closest("[data-must]")) { updPark(iso, pid, p => { p.items = p.items.map(i => i.eid === eid ? { ...i, must: !i.must } : i); return p; }); renderTrip(); return; }
@@ -2765,11 +2842,11 @@ function viewParks(v) {
   };
   v.oninput = e => { const li = e.target.closest("[data-eid]"); if (li && e.target.dataset.f === "notes") updPark(iso, pid, p => { p.items = p.items.map(i => i.eid === li.dataset.eid ? { ...i, notes: e.target.value.slice(0, 300) } : i); return p; }); };
 }
-function tpItemHtml(it, k, party) {
+function tpItemHtml(it, k, party, eta) {
   const short = it.minH ? party.filter(x => x.h && x.h < it.minH) : [];
   return `<li class="tp-item ${it.done ? "done" : ""} ${it.must ? "must" : ""}" data-eid="${esc(it.eid)}">
     <div class="tp-row"><span class="grip" aria-hidden="true">⋮⋮</span><input type="checkbox" data-f="done" ${it.done ? "checked" : ""} aria-label="Done: ${esc(it.name)}">
-      <span class="tp-n">${k + 1}</span><span class="grow"><b>${TPT[it.t]?.[0] || ""} ${esc(it.name)}</b>
+      <span class="tp-n">${k + 1}</span><span class="grow"><b>${TPT[it.t]?.[0] || ""} ${esc(it.name)}</b>${eta != null && !it.done ? `<span class="tp-eta">≈ ${mm12(eta)}</span>` : ""}
         <span class="tp-tags">${it.ll ? `<span class="pill ll">${esc(LLOPT.find(o => o[0] === it.ll)?.[1] || "")}${it.llTime ? " · " + fmt12(it.llTime) : ""}</span>` : ""}${it.minH ? `<span class="pill">${showH(it.minH)} min</span>` : ""}${short.length ? `<span class="pill warn">⚠ Too short: ${short.map(x => esc(x.name)).join(", ")}</span>` : ""}${it.notes ? `<span class="hint">${esc(it.notes)}</span>` : ""}</span></span>
       <button class="iconbtn star ${it.must ? "on" : ""}" type="button" data-must aria-pressed="${!!it.must}" aria-label="Must-do">${it.must ? "★" : "☆"}</button>
       <button class="iconbtn" type="button" data-more aria-label="Details for ${esc(it.name)}">⋯</button>
@@ -2815,7 +2892,8 @@ async function fillTodayParks(iso) {
   for (const p of T.days[iso]?.parks || []) {
     const el = document.querySelector(`[data-tlive="${CSS.escape(p.pid)}"]`); if (!el) continue;
     try { const data = await tpLive(p.pid); const its = (p.items || []).filter(i => !i.done && i.t !== "RESTAURANT");
-      const rows = its.map(i => ({ i, l: data[i.eid] })).sort((a, b) => ((a.l?.status === "OPERATING" ? a.l.queue?.STANDBY?.waitTime ?? 0 : 999) - (b.l?.status === "OPERATING" ? b.l.queue?.STANDBY?.waitTime ?? 0 : 999)));
+      const wv = r => r.i.t === "SHOW" ? 500 : r.l?.status === "OPERATING" ? r.l.queue?.STANDBY?.waitTime ?? 0 : 999;
+      const rows = its.map(i => ({ i, l: data[i.eid] })).sort((a, b) => wv(a) - wv(b));
       el.innerHTML = rows.length ? rows.slice(0, 12).map(r => liveRow(r.i, r.l)).join("") : `<p class="hint">Add rides to your park plan to see their waits here.</p>`;
     } catch { el.innerHTML = `<span class="hint">Couldn't reach live wait times.</span>`; }
   }
@@ -3436,6 +3514,8 @@ function popupFor(p) {
   return `<b>${esc(p.name)}</b><br><span style="color:var(--muted)">${esc(TYPE[p.type]?.label || "")}${p.city ? " · " + esc(p.city) : ""}</span><br>${esc(d)}${p.time ? " · " + esc(p.time) : ""}`;
 }
 function renderMap() {
+  // a sync from someone else shouldn't close the popup you're reading: redraw once it closes
+  if (arguments[0] === "data" && map && map._popup && map.hasLayer(map._popup)) { if (!renderMap.waiting) { renderMap.waiting = true; map.once("popupclose", () => { renderMap.waiting = false; setTimeout(renderMap, 0); }); } return; }
   if (!map || !cur || !T.trip) return;
   layer.clearLayers();
   const pts = [], days = tripDays(), tab = cur.tab;
@@ -3455,10 +3535,7 @@ function renderMap() {
   } else if (tab === "places") {
     placeList().filter(hasPt).filter(p => (!PF.type || p.type === PF.type) && (!PF.city || p.city === PF.city) && (!PF.country || p.country === PF.country)).forEach(p => add(p.lat, p.lon, icon("", "dot", TYPE[p.type].col, 16), popupFor(p), p.id));
   } else if (tab === "parks" && parkSel && parkOf(parkSel.iso, parkSel.pid)) {
-    const its = parkOf(parkSel.iso, parkSel.pid).items.filter(i => i.lat != null && !i.done);
-    its.forEach((it, k) => add(it.lat, it.lon, icon(String(k + 1), "num", it.must ? "#C9A227" : colVal(dayColor(parkSel.iso, tripDays().indexOf(parkSel.iso))), 24), `<b>${esc(it.name)}</b>${it.must ? "<br>★ Must-do" : ""}`));
-    if (its.length > 1) L.polyline(its.map(i => [i.lat, i.lon]), { color: colVal(dayColor(parkSel.iso, tripDays().indexOf(parkSel.iso))), weight: 3, opacity: .7, dashArray: "5 6" }).addTo(layer);
-    if (!its.length) { const p = parkOf(parkSel.iso, parkSel.pid); if (p.lat != null) pts.push([p.lat, p.lon]); }
+    parkMapLayer(pts, add);
   } else if (tab === "food") {
     placeList().filter(p => hasPt(p) && FOODT.includes(p.type) && (!RF.kind || p.type === RF.kind) && (!RF.country || p.country === RF.country) && (!RF.city || p.city === RF.city)).forEach(p => add(p.lat, p.lon, icon("", "dot", TYPE[p.type].col, 16), popupFor(p), p.id));
     if (Array.isArray(eat.list)) eat.list.slice(0, 24).forEach(x => add(x.lat, x.lon, icon("", "dot", "var(--muted)", 11), `<b>${esc(x.tags.name)}</b>${x.tags.cuisine ? "<br>" + esc(x.tags.cuisine.replace(/[_;]/g, " ")) : ""}`));
@@ -3478,7 +3555,7 @@ function renderMap() {
     chips.innerHTML = `<button type="button" class="${!mapFocus ? "on" : ""}" data-mday="">All days</button>` + withPlaces.map(([iso, i, n]) => `<button type="button" class="${mapFocus === iso ? "on" : ""}" data-mday="${iso}" style="--mc:${dayColor(iso, i)}" title="${esc(dayLabel(iso))}${n ? ` · ${n} place${n === 1 ? "" : "s"}` : " · travel day"}"><i></i>Day ${i + 1}${n ? "" : " ✈"}</button>`).join("");
     chips.onclick = e => { const b = e.target.closest("[data-mday]"); if (!b) return; focusDay(b.dataset.mday || null); if (b.dataset.mday && cur.tab === "plan") document.getElementById("day-" + b.dataset.mday)?.scrollIntoView({ block: "start", behavior: reduceMotion() ? "auto" : "smooth" }); };
   }
-  const key = tab + "|" + (mapFocus || "") + "|" + (bkFocus || "") + "|" + BF.kind + "|" + (tab === "parks" && parkSel ? parkSel.iso + parkSel.pid : "") + "|" + pts.length;
+  const key = tab + "|" + (mapFocus || "") + "|" + (bkFocus || "") + "|" + BF.kind + "|" + (tab === "parks" && parkSel ? parkSel.iso + parkSel.pid + (mapCat.items ? "c" : "") : "") + "|" + pts.length;
   if (fitPending || key !== lastFitKey) {
     // Leaflet skips a new zoom while one is still animating, so wait for it
     const fit = () => { if (!map) return; if (pts.length) map.fitBounds(L.latLngBounds(pts).pad(0.15), { maxZoom: 15, animate: !reduceMotion() }); else { const ds = tripDests(T.trip).filter(hasPt); if (ds.length > 1) map.fitBounds(L.latLngBounds(ds.map(d => [d.lat, d.lon])).pad(0.3), { maxZoom: 6 }); else if (ds.length) map.setView([ds[0].lat, ds[0].lon], 6); } };
